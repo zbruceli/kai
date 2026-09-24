@@ -108,7 +108,15 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=int(os.environ.get("KAI_PORT", "8765")))
     p.add_argument("--token", default=os.environ.get("KAI_DEVICE_TOKEN", ""))
+    p.add_argument("--mic", help="input device name or index (see --list-devices)")
+    p.add_argument("--speaker", help="output device name or index")
+    p.add_argument("--list-devices", action="store_true")
     args = p.parse_args()
+    if args.list_devices:
+        print(sd.query_devices())
+        return
+    as_device = lambda v: int(v) if v and v.isdigit() else v  # noqa: E731
+    sd.default.device = (as_device(args.mic), as_device(args.speaker))
     try:
         asyncio.run(run(args.host, args.port, args.token))
     except KeyboardInterrupt:
