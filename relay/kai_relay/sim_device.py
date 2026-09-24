@@ -73,7 +73,7 @@ async def run(host: str, port: int, token: str) -> None:
                 if kind == "card":
                     print(f"\n┌ {m['title']}\n" + "\n".join(f"│ {line}" for line in m["lines"]) + "\n└")
                 elif kind == "caption":
-                    print(f"\r  kai: {m['text'][-70:]:<70}", end="", flush=True)
+                    print(m["delta"], end="", flush=True)
                 elif kind == "interrupted":
                     speaker.clear()
                 elif kind == "state":

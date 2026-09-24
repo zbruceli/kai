@@ -88,3 +88,9 @@ def test_notes_roundtrip(ctx):
     assert r.data["notes"] == 1
     r = asyncio.run(tools.call("save_note", {"text": "buy more leader line"}, ctx))
     assert r.data["trip"] == "Inbox"
+
+
+def test_screen_text_is_ascii():
+    from kai_relay.session import screen_text
+
+    assert screen_text("It’s 68°F at Año Nuevo — nice…") == "It's 68F at Ano Nuevo - nice..."

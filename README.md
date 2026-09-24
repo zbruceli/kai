@@ -31,9 +31,13 @@ M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay �
 
 | Button | Action |
 |---|---|
-| **A** (front) hold | talk; release to send. Pressing while Kai talks interrupts it. Taps < 0.3 s are ignored. |
-| **B** (side) click | stop Kai talking / dismiss card |
-| **B** hold | status card: Wi-Fi, relay, battery, firmware |
+| **Front** (A) hold | talk; release to send. Pressing while Kai talks interrupts it. Taps < 0.3 s are ignored. |
+| **Side** (B) click | scroll the reply a page (wraps to the top); from the idle face, reopens the last reply |
+| **Side** (B) hold | hush Kai mid-answer; otherwise show the status card (Wi-Fi, relay, battery) |
+
+Every answer is spoken **and** shown: the reply screen has a mini face in the header, the tool's card
+(tides, conditions, ...) and then a live transcript of what Kai says. It follows along while Kai talks,
+jumps back to the top when it's done, and returns to the face after a minute.
 
 ## Setup
 

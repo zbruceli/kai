@@ -1,5 +1,7 @@
 #include "face.h"
 
+#include <vector>
+
 namespace face {
 namespace {
 
@@ -7,27 +9,49 @@ constexpr int W = 240, H = 135;
 constexpr int EYE_L = 82, EYE_R = 158, EYE_Y = 52;
 constexpr uint32_t FRAME_MS = 33;
 
+// Reply view layout
+constexpr int HEADER_H = 26;
+constexpr int LINE_H = 18;
+constexpr int BODY_Y = HEADER_H + 3;
+constexpr int VISIBLE_LINES = (H - BODY_Y) / LINE_H;  // 5
+constexpr int TEXT_X = 6;
+constexpr int TEXT_W = W - TEXT_X - 10;               // room for the scrollbar
+
 M5Canvas canvas(&M5.Display);
-uint16_t KAI, DIM, RED_, BG;
+uint16_t KAI, DIM, RED_, SOFT, TRACK;
 
 Expr expr = Expr::Offline;
 float level = 0, shownLevel = 0;
-String caption, statusText;
+String statusText;
 int battery = -1;
-Card card;
-bool cardOn = false;
+
+// Reply state
+struct Line {
+  String text;
+  bool fromCard;
+};
+Card replyCard;
+bool replyHasCard = false;
+String replyText;
+std::vector<Line> lines;
+bool linesDirty = false;
+bool replyOn = false;
+bool speaking = false;
+int top = 0;              // first visible line
+bool userScrolled = false;
 
 uint32_t lastFrame = 0, nextBlink = 0, blinkUntil = 0, nextGaze = 0;
 float gazeX = 0, gazeTarget = 0;
+
+// ---- face view -------------------------------------------------------------
 
 void eye(int cx, int cy, int w, int h, uint16_t color) {
   canvas.fillSmoothRoundRect(cx - w / 2, cy - h / 2, w, h, min(w, h) / 2, color);
 }
 
-void drawEyes(uint32_t now) {
+void drawFace(uint32_t now) {
   int w = 30, h = 44, dy = 0;
-  float dx = gazeX;
-  uint16_t color = KAI;
+  int dx = int(gazeX);
 
   switch (expr) {
     case Expr::Offline:
@@ -35,10 +59,9 @@ void drawEyes(uint32_t now) {
         canvas.drawWideLine(cx - 12, EYE_Y - 12, cx + 12, EYE_Y + 12, 4, DIM);
         canvas.drawWideLine(cx - 12, EYE_Y + 12, cx + 12, EYE_Y - 12, 4, DIM);
       }
-      return;
+      break;
     case Expr::Listening:
-      w = 34, h = 52;  // wide-eyed and attentive
-      dx = 0;
+      w = 34, h = 52, dx = 0;  // wide-eyed and attentive
       break;
     case Expr::Thinking:
       h = 20, dy = -10, dx = 8;  // squinting up and to the side
@@ -46,20 +69,17 @@ void drawEyes(uint32_t now) {
     default:
       break;
   }
-  if (now < blinkUntil && expr != Expr::Thinking) h = 5;
-  eye(EYE_L + dx, EYE_Y + dy, w, h, color);
-  eye(EYE_R + dx, EYE_Y + dy, w, h, color);
-}
-
-void drawFace(uint32_t now) {
-  drawEyes(now);
+  if (expr != Expr::Offline) {
+    if (now < blinkUntil && expr != Expr::Thinking) h = 5;
+    eye(EYE_L + dx, EYE_Y + dy, w, h, KAI);
+    eye(EYE_R + dx, EYE_Y + dy, w, h, KAI);
+  }
 
   switch (expr) {
     case Expr::Listening: {
       if ((now / 400) % 2) canvas.fillCircle(W - 14, 12, 6, RED_);
-      int bar = int(shownLevel * 160);
-      canvas.fillRoundRect(40, 102, 160, 8, 4, canvas.color565(30, 40, 50));
-      canvas.fillRoundRect(40, 102, max(8, bar), 8, 4, KAI);
+      canvas.fillRoundRect(40, 102, 160, 8, 4, TRACK);
+      canvas.fillRoundRect(40, 102, max(8, int(shownLevel * 160)), 8, 4, KAI);
       break;
     }
     case Expr::Thinking:
@@ -68,11 +88,6 @@ void drawFace(uint32_t now) {
         canvas.fillCircle(104 + i * 16, 96, 4, on ? KAI : DIM);
       }
       break;
-    case Expr::Speaking: {
-      int mh = 4 + int(shownLevel * 22);
-      canvas.fillSmoothRoundRect(W / 2 - 18, 94 - mh / 2, 36, mh, min(mh / 2, 10), KAI);
-      break;
-    }
     case Expr::Idle:
       canvas.fillSmoothRoundRect(W / 2 - 10, 92, 20, 4, 2, DIM);  // resting mouth
       break;
@@ -80,37 +95,100 @@ void drawFace(uint32_t now) {
       break;
   }
 
-  const String& bottom = (expr == Expr::Speaking && caption.length()) ? caption : statusText;
-  if (bottom.length()) {
+  if (statusText.length()) {
     canvas.setFont(&fonts::Font2);
     canvas.setTextColor(DIM);
     canvas.setTextDatum(bottom_center);
-    // Show the tail that fits on one line.
-    String text = bottom;
-    while (text.length() > 1 && canvas.textWidth(text) > W - 8) text.remove(0, 1);
-    canvas.drawString(text, W / 2, H - 2);
+    canvas.drawString(statusText, W / 2, H - 2);
+  }
+
+  if (battery >= 0) {
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextDatum(top_left);
+    canvas.setTextColor(battery <= 15 ? RED_ : DIM);
+    canvas.drawString(String(battery) + "%", 4, 4);
   }
 }
 
-void drawCard() {
+// ---- reply view ------------------------------------------------------------
+
+void wrapInto(const String& text, bool fromCard) {
+  String line;
+  int start = 0;
+  const int len = text.length();
+  while (start < len) {
+    int end = text.indexOf(' ', start);
+    if (end < 0) end = len;
+    String word = text.substring(start, end);
+    start = end + 1;
+    if (word.isEmpty()) continue;
+    String candidate = line.isEmpty() ? word : line + " " + word;
+    if (canvas.textWidth(candidate) <= TEXT_W) {
+      line = candidate;
+      continue;
+    }
+    if (!line.isEmpty()) lines.push_back({line, fromCard});
+    // A single word wider than the screen gets hard-broken.
+    while (canvas.textWidth(word) > TEXT_W) {
+      int cut = word.length() - 1;
+      while (cut > 1 && canvas.textWidth(word.substring(0, cut)) > TEXT_W) cut--;
+      lines.push_back({word.substring(0, cut), fromCard});
+      word = word.substring(cut);
+    }
+    line = word;
+  }
+  if (!line.isEmpty()) lines.push_back({line, fromCard});
+}
+
+int maxTop() { return max(0, int(lines.size()) - VISIBLE_LINES); }
+
+void rebuildLines() {
+  canvas.setFont(&fonts::Font2);
+  lines.clear();
+  if (replyHasCard) {
+    for (size_t i = 0; i < replyCard.count; i++) wrapInto(replyCard.lines[i], true);
+  }
+  wrapInto(replyText, false);
+  linesDirty = false;
+  // While Kai is talking, follow the newest words unless the user took over scrolling.
+  top = (speaking && !userScrolled) ? maxTop() : min(top, maxTop());
+}
+
+void drawMiniFace(uint32_t now) {
+  int eh = (now < blinkUntil) ? 3 : 12;
+  canvas.fillSmoothRoundRect(8, 12 - eh / 2 - 3, 7, eh, 3, KAI);
+  canvas.fillSmoothRoundRect(20, 12 - eh / 2 - 3, 7, eh, 3, KAI);
+  if (speaking) {
+    int mh = 2 + int(shownLevel * 6);
+    canvas.fillSmoothRoundRect(12, 21 - mh / 2, 11, mh, 1, KAI);
+  }
+}
+
+void drawReply(uint32_t now) {
+  if (linesDirty) rebuildLines();
+
+  drawMiniFace(now);
   canvas.setTextDatum(top_left);
   canvas.setFont(&fonts::FreeSansBold9pt7b);
   canvas.setTextColor(KAI);
-  canvas.drawString(card.title, 6, 4);
-  canvas.fillSmoothRoundRect(W - 30, 6, 7, 12, 3, KAI);  // tiny Kai peeking in the corner
-  canvas.fillSmoothRoundRect(W - 18, 6, 7, 12, 3, KAI);
-  canvas.drawFastHLine(6, 24, W - 12, DIM);
-  canvas.setFont(&fonts::Font2);
-  canvas.setTextColor(TFT_WHITE);
-  for (size_t i = 0; i < card.count; i++) canvas.drawString(card.lines[i], 6, 30 + i * 21);
-}
+  canvas.drawString(replyHasCard && replyCard.title.length() ? replyCard.title : String("Kai"), 36, 5);
+  canvas.drawFastHLine(4, HEADER_H, W - 8, DIM);
 
-void drawBattery() {
-  if (battery < 0 || cardOn) return;
-  canvas.setFont(&fonts::Font0);
-  canvas.setTextDatum(top_left);
-  canvas.setTextColor(battery <= 15 ? RED_ : DIM);
-  canvas.drawString(String(battery) + "%", 4, 4);
+  canvas.setFont(&fonts::Font2);
+  for (int i = 0; i < VISIBLE_LINES && top + i < int(lines.size()); i++) {
+    const Line& l = lines[top + i];
+    canvas.setTextColor(l.fromCard ? TFT_WHITE : SOFT);
+    canvas.drawString(l.text, TEXT_X, BODY_Y + i * LINE_H);
+  }
+
+  // Scrollbar, only when there's more than a screenful.
+  if (int(lines.size()) > VISIBLE_LINES) {
+    const int trackY = BODY_Y, trackH = H - BODY_Y - 3;
+    const int thumbH = max(10, trackH * VISIBLE_LINES / int(lines.size()));
+    const int thumbY = trackY + (trackH - thumbH) * top / max(1, maxTop());
+    canvas.fillRoundRect(W - 5, trackY, 3, trackH, 1, TRACK);
+    canvas.fillRoundRect(W - 5, thumbY, 3, thumbH, 1, KAI);
+  }
 }
 
 }  // namespace
@@ -123,20 +201,52 @@ void begin() {
   KAI = canvas.color565(90, 220, 255);
   DIM = canvas.color565(70, 90, 105);
   RED_ = canvas.color565(255, 70, 70);
-  BG = TFT_BLACK;
+  SOFT = canvas.color565(190, 215, 230);
+  TRACK = canvas.color565(30, 40, 50);
 }
 
-void setExpr(Expr e) {
-  if (e != expr) caption = "";
-  expr = e;
-}
+void setExpr(Expr e) { expr = e; }
 void setLevel(float l) { level = l; }
-void setCaption(const String& text) { caption = text; }
 void setStatusText(const String& text) { statusText = text; }
 void setBattery(int percent) { battery = percent; }
-void showCard(const Card& c) { card = c; cardOn = true; }
-void hideCard() { cardOn = false; }
-bool cardVisible() { return cardOn; }
+
+void clearReply() {
+  replyHasCard = false;
+  replyCard = Card{};
+  replyText = "";
+  lines.clear();
+  top = 0;
+  userScrolled = false;
+  speaking = false;
+}
+
+void setReplyCard(const Card& card) {
+  replyCard = card;
+  replyHasCard = true;
+  linesDirty = true;
+}
+
+void appendReplyText(const String& text) {
+  replyText += text;
+  linesDirty = true;
+}
+
+bool hasReply() { return replyHasCard || replyText.length() > 0; }
+void showReply(bool on) { replyOn = on; }
+bool replyVisible() { return replyOn; }
+void setSpeaking(bool s) { speaking = s; }
+
+void scrollReply() {
+  if (linesDirty) rebuildLines();
+  userScrolled = true;
+  // Page down keeping one line of overlap for context; from the bottom, wrap to the top.
+  top = (top >= maxTop()) ? 0 : min(top + VISIBLE_LINES - 1, maxTop());
+}
+
+void replyFinished() {
+  speaking = false;
+  if (!userScrolled) top = 0;
+}
 
 void render() {
   uint32_t now = millis();
@@ -155,13 +265,12 @@ void render() {
   gazeX += (gazeTarget - gazeX) * 0.15f;
   shownLevel += (level - shownLevel) * 0.5f;
 
-  canvas.fillSprite(BG);
-  if (cardOn) {
-    drawCard();
+  canvas.fillSprite(TFT_BLACK);
+  if (replyOn) {
+    drawReply(now);
   } else {
     drawFace(now);
   }
-  drawBattery();
   canvas.pushSprite(0, 0);
 }
 

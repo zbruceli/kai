@@ -8,7 +8,7 @@ Device -> relay
 Relay -> device
     text   {"type": "state", "state": "idle" | "thinking"}
     text   {"type": "card", "title": str, "lines": [str]}
-    text   {"type": "caption", "text": str}  tail of what Kai is saying
+    text   {"type": "caption", "delta": str} next words of what Kai is saying (ASCII, for the screen)
     text   {"type": "interrupted"}           drop any queued speech
     text   {"type": "turn_complete"}
     binary PCM16 mono 24 kHz speech, <= DEVICE_FRAME bytes per frame
@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import time
+import unicodedata
 from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Any
@@ -37,7 +38,15 @@ IN_RATE = 16000
 # Presses shorter than this are taps, not questions: nothing is sent to Gemini.
 MIN_UTTERANCE_BYTES = IN_RATE * 2 * 300 // 1000
 DEVICE_FRAME = 4096
-CAPTION_CHARS = 80
+OUT_BYTES_PER_S = 24000 * 2
+
+# The Stick's fonts are ASCII-only: map common typography, then strip accents ("Año Nuevo" -> "Ano Nuevo").
+_ASCII = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-",
+                        "\u2014": "-", "\u2026": "...", "\u00b0": "", "\u00a0": " "})
+
+
+def screen_text(text: str) -> str:
+    return unicodedata.normalize("NFKD", text.translate(_ASCII)).encode("ascii", "ignore").decode()
 
 
 class KaiSession:
@@ -58,6 +67,7 @@ class KaiSession:
         self._pending_bytes = 0
         self._caption = ""
         self._heard = ""
+        self._audio_bytes = 0
         self._last_activity = time.monotonic()
 
     # ---- device side -------------------------------------------------------
@@ -217,7 +227,11 @@ class KaiSession:
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
             for r in results:
                 if r.card:
-                    await self._send({"type": "card", **r.card})
+                    await self._send({
+                        "type": "card",
+                        "title": screen_text(r.card["title"]),
+                        "lines": [screen_text(line) for line in r.card["lines"]],
+                    })
             await live.send_tool_response(
                 function_responses=[
                     types.FunctionResponse(id=fc.id, name=fc.name, response=r.data) for fc, r in zip(calls, results)
@@ -235,14 +249,21 @@ class KaiSession:
         if sc.model_turn and not self._ptt:
             for part in sc.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
+                    self._audio_bytes += len(part.inline_data.data)
                     await self._send_audio(part.inline_data.data)
         if sc.output_transcription and sc.output_transcription.text and not self._ptt:
-            self._caption += sc.output_transcription.text
-            await self._send({"type": "caption", "text": self._caption[-CAPTION_CHARS:]})
+            delta = sc.output_transcription.text
+            self._caption += delta
+            await self._send({"type": "caption", "delta": screen_text(delta)})
         if sc.turn_complete:
-            log.info("[%s] you: %s", self.device, self._heard.strip())
-            log.info("[%s] kai: %s", self.device, self._caption.strip())
+            if self._heard.strip():
+                log.info("[%s] you: %s", self.device, self._heard.strip())
+            speech_s = self._audio_bytes / OUT_BYTES_PER_S
+            log.info("[%s] kai (%.1fs audio): %s", self.device, speech_s, self._caption.strip() or "-")
+            if self._caption.strip() and not self._audio_bytes:
+                log.warning("[%s] turn had a transcript but no audio", self.device)
             self._heard = self._caption = ""
+            self._audio_bytes = 0
             await self._send({"type": "turn_complete"})
 
     async def _idle_watchdog(self) -> None:
