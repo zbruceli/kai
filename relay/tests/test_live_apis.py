@@ -15,8 +15,8 @@ def test_tides_half_moon_bay(ctx):  # noqa: F811
     print(r.card)
 
 
-def test_conditions_coastal(ctx):  # noqa: F811
-    r = asyncio.run(tools.call("get_conditions", {}, ctx))
+def test_weather_coastal(ctx):  # noqa: F811
+    r = asyncio.run(tools.call("get_weather", {}, ctx))
     assert r.data.get("coastal") is True, r.data
     print(r.card)
 
@@ -24,4 +24,13 @@ def test_conditions_coastal(ctx):  # noqa: F811
 def test_sun_times(ctx):  # noqa: F811
     r = asyncio.run(tools.call("get_sun_times", {"place": "Pescadero"}, ctx))
     assert r.data.get("golden_hour_evening"), r.data
+    print(r.card)
+
+
+def test_weather_inland_named_day(ctx):  # noqa: F811
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    r = asyncio.run(tools.call("get_weather", {"place": "San Mateo, CA", "date": tomorrow}, ctx))
+    assert r.data["day"]["high"] is not None, r.data
     print(r.card)

@@ -23,6 +23,9 @@ void pollSpeaker(bool turnComplete);
 void clearPlayback();
 bool playbackIdle();
 
+// Max volume on USB power, a little lower on battery (loud peaks can brown out the 250 mAh cell).
+void updateVolume();
+
 // 0..1 loudness of the most recent chunk, for the face's mouth and the mic meter.
 float level();
 

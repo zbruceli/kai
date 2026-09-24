@@ -15,6 +15,21 @@ MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
 COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 
+# WMO weather codes, short enough for the card.
+SKY = {
+    0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Freezing fog",
+    51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle", 56: "Freezing drizzle", 57: "Freezing drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+    80: "Showers", 81: "Showers", 82: "Heavy showers", 85: "Snow showers", 86: "Snow showers",
+    95: "Thunderstorms", 96: "T-storms, hail", 99: "T-storms, hail",
+}
+
+
+def sky(code: int | None) -> str:
+    return SKY.get(code, "?") if code is not None else "?"
+
+
 def compass(degrees: float | None) -> str:
     return "?" if degrees is None else COMPASS[round(degrees / 22.5) % 16]
 
@@ -27,7 +42,8 @@ async def _forecast(ctx: ToolContext, p: geo.Place) -> dict:
             "latitude": p.lat,
             "longitude": p.lon,
             "hourly": "temperature_2m,precipitation_probability,cloud_cover,wind_speed_10m,wind_gusts_10m,wind_direction_10m",
-            "daily": "sunrise,sunset",
+            "current": "temperature_2m,apparent_temperature,weather_code",
+            "daily": "sunrise,sunset,temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
             "timezone": "auto",
             "forecast_days": 4,
             "wind_speed_unit": "mph" if imperial else "kmh",
@@ -77,15 +93,16 @@ def _day_index(daily_times: list[str], day: str | None, tz: ZoneInfo) -> int:
 
 
 @tool(
-    "get_conditions",
-    "Fishing/outdoor conditions for a place: wind, gusts, rain chance, air temp, and if on the coast "
-    "wave height, swell and water temperature. Hourly for the next 12 hours or for a given day.",
+    "get_weather",
+    "Weather for a place: current temperature and sky, today's high/low, rain chance, wind and gusts, "
+    "and on the coast wave height, swell and water temperature (for fishing). Hourly for the next 12 hours, "
+    "or for a given day.",
     {
         "place": {"type": "STRING", "description": "Spot, beach, lake or town. Omit for home."},
         "date": {"type": "STRING", "description": "Day YYYY-MM-DD (up to 3 days ahead). Omit for the next 12 hours."},
     },
 )
-async def get_conditions(ctx: ToolContext, place: str | None = None, date: str | None = None) -> ToolResult:
+async def get_weather(ctx: ToolContext, place: str | None = None, date: str | None = None) -> ToolResult:
     p = await geo.resolve(ctx, place)
     fc = await _forecast(ctx, p)
     marine = await _marine(ctx, p)
@@ -119,24 +136,38 @@ async def get_conditions(ctx: ToolContext, place: str | None = None, date: str |
     sunrise = datetime.fromisoformat(fc["daily"]["sunrise"][d])
     sunset = datetime.fromisoformat(fc["daily"]["sunset"][d])
 
+    daily = fc["daily"]
+    high, low = daily["temperature_2m_max"][d], daily["temperature_2m_min"][d]
+    rain_max = daily["precipitation_probability_max"][d]
+    cur = fc["current"]
+
     # Open-Meteo labels units "mp/h" and "°F"; the Stick's font has no degree sign.
     ws, deg = ("mph", "F") if ctx.settings.imperial else ("kmh", "C")
-    lines = []
+    lu = "ft" if ctx.settings.imperial else "m"
+    # Most important first: temperature and sky, then the day's range, wind, sea, light.
+    if date:
+        lines = [f"{datetime.fromisoformat(date):%a} {sky(daily['weather_code'][d])}"]
+    else:
+        lines = [f"{cur['temperature_2m']:.0f}{deg} {sky(cur['weather_code'])}"]
+    lines.append(f"Hi {high:.0f}{deg}  Lo {low:.0f}{deg}  Rain {rain_max or 0}%")
     if hourly:
         winds = [r["wind"] for r in hourly]
-        lines.append(f"Wind {min(winds):.0f}-{max(winds):.0f}{ws} {hourly[0]['wind_from']}")
-        lines.append(f"Gusts to {max(r['gusts'] for r in hourly):.0f}{ws}")
-        if "waves" in hourly[0] and hourly[0]["waves"] is not None:
-            lu = "ft" if ctx.settings.imperial else "m"
+        gusts = max(r["gusts"] for r in hourly)
+        lines.append(f"Wind {min(winds):.0f}-{max(winds):.0f}{ws} {hourly[0]['wind_from']} g{gusts:.0f}")
+        if hourly[0].get("waves") is not None:
             lines.append(f"Waves {hourly[0]['waves']:.1f}{lu} @{hourly[0]['swell_period_s']:.0f}s")
-        rain = max((r["rain_pct"] or 0) for r in hourly)
-        lines.append(f"Rain {rain}%  Air {hourly[0]['air_temp']:.0f}{deg}")
     lines.append(f"Sun {short_time(sunrise)}-{short_time(sunset)}")
 
     return ToolResult(
         {
             "place": p.name,
-            "units": {"wind": ws, "temp": deg, "waves": "ft" if ctx.settings.imperial else "m"},
+            "units": {"wind": ws, "temp": deg, "waves": lu},
+            "now": None if date else {
+                "temp": cur["temperature_2m"],
+                "feels_like": cur["apparent_temperature"],
+                "sky": sky(cur["weather_code"]),
+            },
+            "day": {"high": high, "low": low, "rain_chance_pct": rain_max, "sky": sky(daily["weather_code"][d])},
             "sunrise": sunrise.strftime("%H:%M"),
             "sunset": sunset.strftime("%H:%M"),
             "hourly": hourly,

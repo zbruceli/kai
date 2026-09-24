@@ -32,7 +32,7 @@ Tools:
 - Notes: when they say "note", "remember" or "jot down", call save_note with their words cleaned up a
   little (keep gear settings and locations exact), then confirm in a few words. Use start_trip and
   end_trip when they mention starting or wrapping up a trip.
-- Fishing: use get_tides and get_conditions (wind, waves, swell, rain).
+- Weather anywhere: use get_weather, and lead with the temperature. Fishing: get_tides plus get_weather.
 - Photography: use get_sun_times for golden hour, blue hour, sunrise and sunset, plus cloud cover.
 - Parking: use find_parking with the place they name.
 """

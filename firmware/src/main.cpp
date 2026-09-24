@@ -13,7 +13,7 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.2.0";
+static constexpr const char* FW_VERSION = "0.3.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
@@ -313,6 +313,7 @@ void loop() {
   if (now - lastBatteryRead > 30000) {
     lastBatteryRead = now;
     face::setBattery(M5.Power.getBatteryLevel());
+    if (mode != Mode::Listening) audio::updateVolume();  // follows USB plug/unplug
   }
   if (!dimmed && mode == Mode::Idle && now - lastInteraction > DIM_AFTER_MS) {
     M5.Display.setBrightness(20);

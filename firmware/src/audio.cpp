@@ -24,6 +24,31 @@ bool playing = false;
 
 float lastLevel = 0;
 
+// ---- loudness: Gemini's voice is fairly quiet for a 1 W speaker, so boost it digitally, but scale the
+// boost per chunk so peaks never clip. Hardware volume is maxed on USB; on battery M5 advises staying
+// under ~75% because loud peaks can brown out the small cell.
+constexpr uint8_t VOLUME_USB = 255;
+constexpr uint8_t VOLUME_BATTERY = 200;
+constexpr float MAX_GAIN = 3.0f;
+constexpr float PEAK_TARGET = 30000.0f;
+float gain = MAX_GAIN;
+
+void boost(int16_t* s, size_t n) {
+  int peak = 1;
+  for (size_t i = 0; i < n; i++) peak = max(peak, abs(int(s[i])));
+  // Drop gain instantly on loud chunks, recover slowly so quiet syllables don't pump.
+  float want = min(MAX_GAIN, PEAK_TARGET / peak);
+  gain = want < gain ? want : gain + (want - gain) * 0.05f;
+  for (size_t i = 0; i < n; i++) {
+    int v = int(s[i] * gain);
+    s[i] = int16_t(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+  }
+}
+
+bool onUsbPower() {
+  return M5.Power.isCharging() == m5::Power_Class::is_charging || M5.Power.getVBUSVoltage() > 4000;
+}
+
 float rms(const int16_t* s, size_t n) {
   if (n == 0) return 0;
   double acc = 0;
@@ -48,7 +73,7 @@ bool begin() {
   ring = static_cast<uint8_t*>(heap_caps_malloc(RING_BYTES, MALLOC_CAP_SPIRAM));
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(160);  // M5 advises staying under ~75% on battery
+  updateVolume();
   return ring != nullptr;
 }
 
@@ -78,6 +103,7 @@ void stopMic(MicSink sink) {
   if (queued >= 1) sink(micBuf[(recIdx + 2) % 3], MIC_CHUNK);
   M5.Mic.end();
   M5.Speaker.begin();
+  updateVolume();
   lastLevel = 0;
 }
 
@@ -104,7 +130,8 @@ void pollSpeaker(bool turnComplete) {
   }
   while (ringCount >= 2 && M5.Speaker.isPlaying(0) < 2) {
     size_t n = ringRead(reinterpret_cast<uint8_t*>(playBuf[playIdx]), min(ringCount & ~size_t(1), PLAY_CHUNK * 2)) / 2;
-    lastLevel = rms(playBuf[playIdx], n);
+    boost(playBuf[playIdx], n);
+    lastLevel = rms(playBuf[playIdx], n) / 2;  // boosted audio would peg the mouth otherwise
     M5.Speaker.playRaw(playBuf[playIdx], n, SPEAKER_RATE, false, 1, 0);
     playIdx = (playIdx + 1) % 3;
   }
@@ -124,5 +151,7 @@ void clearPlayback() {
 bool playbackIdle() { return ringCount < 2 && !M5.Speaker.isPlaying(); }
 
 float level() { return lastLevel; }
+
+void updateVolume() { M5.Speaker.setVolume(onUsbPower() ? VOLUME_USB : VOLUME_BATTERY); }
 
 }  // namespace audio

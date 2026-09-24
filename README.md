@@ -9,7 +9,7 @@ M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay �
  mic 16 kHz PCM  ─────────────────▶   ├─ google_search grounding
  speaker 24 kHz  ◀─────────────────   ├─ notes      → SQLite + Markdown per trip
  face + cards    ◀── JSON ──────────   ├─ tides      → NOAA CO-OPS (nearest station)
- buttons                               ├─ conditions → Open-Meteo forecast + marine
+ buttons                               ├─ weather    → Open-Meteo forecast + marine
                                        ├─ sun/light  → Open-Meteo + astral (golden/blue hour)
                                        └─ parking    → Google Places API (New)
 ```
@@ -21,7 +21,7 @@ M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay �
 | "Who won the Giants game?" / "Is Sam's Chowder House open?" | Google Search | — |
 | "Start a trip called Pigeon Point October" / "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | `start_trip`, `save_note` | Noted #3 |
 | "When's high tide at Pillar Point tomorrow?" | `get_tides` | next 5 highs/lows |
-| "How's the wind and swell at Half Moon Bay this afternoon?" | `get_conditions` | wind, gusts, waves, rain, sun |
+| "What's the weather in San Mateo?" / "How's the swell at Half Moon Bay this afternoon?" | `get_weather` | temp + sky, hi/lo, rain, wind, waves, sun |
 | "When's golden hour at Pescadero Saturday?" | `get_sun_times` | golden/blue hour, sunset clouds |
 | "Find parking near the Ferry Building" | `find_parking` | 5 closest, by distance |
 

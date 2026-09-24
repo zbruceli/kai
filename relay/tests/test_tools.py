@@ -28,7 +28,7 @@ def ctx(tmp_path):
 
 def test_declarations_are_well_formed():
     decls = {d["name"]: d for d in tools.declarations()}
-    assert {"save_note", "list_notes", "start_trip", "end_trip", "get_tides", "get_conditions",
+    assert {"save_note", "list_notes", "start_trip", "end_trip", "get_tides", "get_weather",
             "get_sun_times", "find_parking"} <= decls.keys()
     for d in decls.values():
         assert d["description"] and d["parameters"]["type"] == "OBJECT"
