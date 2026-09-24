@@ -1,0 +1,19 @@
+# Raspberry Pi: runs the relay at boot as the 'pi' user.
+#   sudo cp deploy/kai-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kai-relay
+#   journalctl -u kai-relay -f          # live transcript + tool calls
+[Unit]
+Description=Kai relay (M5StickS3 <-> Gemini Live)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/kai/relay
+ExecStart=/home/pi/.local/bin/uv run --frozen kai-relay
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

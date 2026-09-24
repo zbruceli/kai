@@ -1,0 +1,13 @@
+# firmware
+firmware/.pio/
+firmware/src/secrets.h
+
+# relay
+relay/.env
+relay/data/
+relay/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.DS_Store

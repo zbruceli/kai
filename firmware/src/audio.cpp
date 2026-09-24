@@ -1,0 +1,128 @@
+#include "audio.h"
+
+#include <esp_heap_caps.h>
+#include <math.h>
+
+namespace audio {
+namespace {
+
+// ---- mic: three buffers in rotation. M5.Mic holds two requests at a time, so once a third is queued
+// the oldest one is guaranteed complete and can be sent.
+int16_t micBuf[3][MIC_CHUNK];
+size_t recIdx = 0;
+size_t queued = 0;
+
+// ---- speaker: a PSRAM ring absorbs network bursts (Gemini sends faster than real time).
+constexpr size_t RING_BYTES = 2 * 1024 * 1024;               // ~43 s of 24 kHz speech
+constexpr size_t PREBUFFER_BYTES = SPEAKER_RATE * 2 / 5;     // 200 ms before starting playback
+constexpr size_t PLAY_CHUNK = 1200;                          // samples per playRaw (50 ms)
+uint8_t* ring = nullptr;
+size_t ringHead = 0, ringTail = 0, ringCount = 0;
+int16_t playBuf[3][PLAY_CHUNK];  // three in sequence, per M5Unified's playRaw() contract
+size_t playIdx = 0;
+bool playing = false;
+
+float lastLevel = 0;
+
+float rms(const int16_t* s, size_t n) {
+  if (n == 0) return 0;
+  double acc = 0;
+  for (size_t i = 0; i < n; i++) acc += double(s[i]) * s[i];
+  float v = sqrtf(acc / n) / 6000.0f;  // speech sits well below full scale
+  return v > 1 ? 1 : v;
+}
+
+size_t ringRead(uint8_t* dst, size_t n) {
+  n = min(n, ringCount);
+  size_t first = min(n, RING_BYTES - ringTail);
+  memcpy(dst, ring + ringTail, first);
+  memcpy(dst + first, ring, n - first);
+  ringTail = (ringTail + n) % RING_BYTES;
+  ringCount -= n;
+  return n;
+}
+
+}  // namespace
+
+bool begin() {
+  ring = static_cast<uint8_t*>(heap_caps_malloc(RING_BYTES, MALLOC_CAP_SPIRAM));
+  M5.Mic.end();
+  M5.Speaker.begin();
+  M5.Speaker.setVolume(160);  // M5 advises staying under ~75% on battery
+  return ring != nullptr;
+}
+
+void startMic() {
+  clearPlayback();
+  M5.Speaker.end();
+  M5.Mic.begin();
+  recIdx = 0;
+  queued = 0;
+}
+
+void pollMic(MicSink sink) {
+  if (!M5.Mic.record(micBuf[recIdx], MIC_CHUNK, MIC_RATE)) return;
+  queued++;
+  if (queued >= 3) {
+    const int16_t* done = micBuf[(recIdx + 1) % 3];  // the buffer queued two calls ago
+    lastLevel = rms(done, MIC_CHUNK);
+    sink(done, MIC_CHUNK);
+  }
+  recIdx = (recIdx + 1) % 3;
+}
+
+void stopMic(MicSink sink) {
+  while (M5.Mic.isRecording()) delay(1);
+  // Up to two recorded buffers haven't been sent yet: recIdx-2 then recIdx-1.
+  if (queued >= 2) sink(micBuf[(recIdx + 1) % 3], MIC_CHUNK);
+  if (queued >= 1) sink(micBuf[(recIdx + 2) % 3], MIC_CHUNK);
+  M5.Mic.end();
+  M5.Speaker.begin();
+  lastLevel = 0;
+}
+
+void enqueue(const uint8_t* pcm, size_t bytes) {
+  if (!ring) return;
+  if (bytes > RING_BYTES - ringCount) {
+    log_w("speaker ring full, dropping %u bytes", bytes);
+    bytes = RING_BYTES - ringCount;
+  }
+  size_t first = min(bytes, RING_BYTES - ringHead);
+  memcpy(ring + ringHead, pcm, first);
+  memcpy(ring, pcm + first, bytes - first);
+  ringHead = (ringHead + bytes) % RING_BYTES;
+  ringCount += bytes;
+}
+
+void pollSpeaker(bool turnComplete) {
+  if (!playing) {
+    if (ringCount >= PREBUFFER_BYTES || (turnComplete && ringCount > 0)) {
+      playing = true;
+    } else {
+      return;
+    }
+  }
+  while (ringCount >= 2 && M5.Speaker.isPlaying(0) < 2) {
+    size_t n = ringRead(reinterpret_cast<uint8_t*>(playBuf[playIdx]), min(ringCount & ~size_t(1), PLAY_CHUNK * 2)) / 2;
+    lastLevel = rms(playBuf[playIdx], n);
+    M5.Speaker.playRaw(playBuf[playIdx], n, SPEAKER_RATE, false, 1, 0);
+    playIdx = (playIdx + 1) % 3;
+  }
+  if (ringCount < 2 && !M5.Speaker.isPlaying(0)) {
+    playing = false;  // underrun or finished: prebuffer again before resuming
+    lastLevel = 0;
+  }
+}
+
+void clearPlayback() {
+  M5.Speaker.stop();
+  ringHead = ringTail = ringCount = 0;
+  playing = false;
+  lastLevel = 0;
+}
+
+bool playbackIdle() { return ringCount < 2 && !M5.Speaker.isPlaying(); }
+
+float level() { return lastLevel; }
+
+}  // namespace audio

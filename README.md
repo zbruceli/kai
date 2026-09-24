@@ -1,0 +1,105 @@
+# Kai
+
+A pocket AI pal on an **M5StickS3**: hold the button, ask, and Kai answers out loud with a face and
+little info cards. The Stick stays thin — it streams audio over home Wi-Fi to a **relay on a Raspberry Pi**,
+which runs a **Gemini Live** voice session with Google Search plus Kai's own tools.
+
+```
+M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay ──▶ Gemini Live (gemini-3.8-live)
+ mic 16 kHz PCM  ─────────────────▶   ├─ google_search grounding
+ speaker 24 kHz  ◀─────────────────   ├─ notes      → SQLite + Markdown per trip
+ face + cards    ◀── JSON ──────────   ├─ tides      → NOAA CO-OPS (nearest station)
+ buttons                               ├─ conditions → Open-Meteo forecast + marine
+                                       ├─ sun/light  → Open-Meteo + astral (golden/blue hour)
+                                       └─ parking    → Google Places API (New)
+```
+
+## What you can ask
+
+| Ask | Tool | Card on screen |
+|---|---|---|
+| "Who won the Giants game?" / "Is Sam's Chowder House open?" | Google Search | — |
+| "Start a trip called Pigeon Point October" / "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | `start_trip`, `save_note` | Noted #3 |
+| "When's high tide at Pillar Point tomorrow?" | `get_tides` | next 5 highs/lows |
+| "How's the wind and swell at Half Moon Bay this afternoon?" | `get_conditions` | wind, gusts, waves, rain, sun |
+| "When's golden hour at Pescadero Saturday?" | `get_sun_times` | golden/blue hour, sunset clouds |
+| "Find parking near the Ferry Building" | `find_parking` | 5 closest, by distance |
+
+"Here" / "near me" means `KAI_HOME_*` until the phone companion supplies GPS.
+
+## Controls
+
+| Button | Action |
+|---|---|
+| **A** (front) hold | talk; release to send. Pressing while Kai talks interrupts it. Taps < 0.3 s are ignored. |
+| **B** (side) click | stop Kai talking / dismiss card |
+| **B** hold | status card: Wi-Fi, relay, battery, firmware |
+
+## Setup
+
+### 1. Relay on the Raspberry Pi
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh      # once
+git clone <this repo> ~/kai && cd ~/kai/relay
+cp .env.example .env && nano .env                     # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
+uv sync
+uv run kai-relay                                      # prints ws://<pi-ip>:8765/ws
+```
+
+Run it at boot with `deploy/kai-relay.service` (instructions inside the file). Give the Pi a DHCP
+reservation in your router so its address never changes.
+
+Keys: Gemini from [AI Studio](https://aistudio.google.com/apikey). Parking needs a Maps key with
+**Places API (New)** enabled; without it everything else still works.
+
+### 2. Try it without the Stick
+
+From the Mac, with its mic and speakers:
+
+```bash
+cd relay && uv sync --extra sim
+uv run kai-sim --host raspberrypi.local --token <KAI_DEVICE_TOKEN>
+```
+
+### 3. Flash the Stick
+
+```bash
+cd firmware
+cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, KAI_DEVICE_TOKEN
+pio run -t upload && pio device monitor
+```
+
+If upload can't find the port: hold the side reset button ~2 s until the green LED blinks (download mode).
+`RELAY_HOST` can be the Pi's IP or its `.local` name (resolved over mDNS).
+
+### Tests
+
+```bash
+cd relay
+uv run pytest               # offline unit tests
+uv run pytest -m network -s # hits NOAA / Open-Meteo for real, prints the cards
+```
+
+## Layout
+
+```
+firmware/            PlatformIO, Arduino-ESP32 3.x, M5Unified
+  src/main.cpp       modes, buttons, Wi-Fi + WebSocket
+  src/audio.*        half-duplex codec: mic streaming, PSRAM speaker ring buffer
+  src/face.*         face expressions + info cards (240x135)
+relay/
+  kai_relay/session.py   device <-> Gemini Live bridge (wire protocol documented at the top)
+  kai_relay/persona.py   Kai's system prompt
+  kai_relay/tools/       one file per capability; add a tool with the @tool decorator
+  deploy/                systemd unit for the Pi
+```
+
+## Roadmap
+
+- [x] M0–M3: push-to-talk voice, search, notes, tides, conditions, light, parking, cards
+- [ ] M4: IMU gestures (shake = cancel, lift = wake), deep sleep between uses, OTA updates, battery tuning
+- [ ] Session resumption so context survives Gemini's ~10 min connection limit
+- [ ] v2: phone companion as transport + GPS ("near me" for real, location-tagged notes), relay on Cloud Run
+      with per-device tokens
+- [ ] Optional M5 Unit CAM on the Grove port for "what am I looking at?"
