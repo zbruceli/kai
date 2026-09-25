@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.1
+
+- On USB power the screen now turns off after 45 s idle (was 4 minutes), matching battery timing. The Stick
+  stays connected on USB, so it still answers instantly.
+
 ## v0.8.0: power
 
 Battery life, projected from the power budget in docs/POWER.md (measurements pending): **~6 days at 20

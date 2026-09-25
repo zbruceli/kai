@@ -42,7 +42,7 @@ jumps back to the top when it's done, and returns to the face 20 seconds later.
 Power: after 15 seconds idle Kai falls asleep and the backlight dims. On battery, after 45 seconds the
 Stick deep-sleeps (Wi-Fi and screen off); either button wakes it in a few seconds. Holding the front button to wake
 starts recording immediately, so you can just press and talk: speech is buffered until the relay
-reconnects. On USB it never deep-sleeps, it only turns the screen off after four minutes, so it answers
+reconnects. On USB it turns the screen off at 45 seconds too but never deep-sleeps, so it still answers
 instantly on a desk. Deep sleep drops Gemini's conversation context.
 
 Expect about 6 days per charge at 20 questions a day (projected; see [docs/POWER.md](docs/POWER.md)).

@@ -19,7 +19,7 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.8.0";
+static constexpr const char* FW_VERSION = "0.8.1";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;    // reply screen returns to the face after this idle time
@@ -35,7 +35,7 @@ static constexpr uint32_t CPU_MHZ_BUSY = 240;               // listening, thinki
 static constexpr uint32_t CPU_MHZ_IDLE = 80;                // lowest speed Wi-Fi allows
 // M5PM1 (I2C 0x6E): GPIO2 switches the L3B rail (LCD, backlight, mic, codec, amp).
 static constexpr uint8_t PM1_ADDR = 0x6E, PM1_GPIO_OUT = 0x11, PM1_L3B_BIT = 1 << 2;
-static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;  // on USB
+static constexpr uint32_t SCREEN_OFF_AFTER_MS = 45000;      // on USB: looks asleep, stays connected
 
 #ifdef KAI_TELEMETRY
 // Measurement builds only (env:sticks3_telemetry / sticks3_powertest): battery voltage and state go to
