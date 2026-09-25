@@ -97,16 +97,20 @@ them:
 
 ## Measuring it
 
-Every 30 s the firmware reports battery mV, mode, backlight, and Wi-Fi power save to the relay
-(`relay/data/power.csv`). Each wake reports the voltage and time across the deep sleep. `kai-power`
+Release firmware sends no telemetry. For measurements, flash a measurement build from `firmware/`:
+`pio run -e sticks3_telemetry -t upload` behaves normally but reports battery mV, mode, backlight, Wi-Fi
+power save, CPU MHz, loop rate, and draw time every 30 s. It also reports the voltage and time across
+each deep sleep. `sticks3_powertest` adds a hold-state mode: it never dims or sleeps. The relay logs
+the reports to `relay/data/power.csv`. `kai-power`
 fits voltage slopes over steady stretches and converts them to mA through a LiPo curve (roughly ±20%
 over 20+ minute windows). Run it on the relay server: `cd ~/kai/relay && uv run kai-power`.
 
-- **T1, deep sleep (overnight):** charge to full, unplug, and leave Kai alone; it deep-sleeps after
-  3 minutes. In the morning, press the side button. The relay log prints `woke after … h asleep … (~x mA)`.
-- **T2, awake idle:** flash the hold-state build (`pio run -e sticks3_powertest -t upload`), unplug,
+- **T1, deep sleep (overnight):** flash `sticks3_telemetry`, charge to full, unplug, and leave Kai
+  alone; it deep-sleeps after 45 seconds. In the morning, press the side button. The relay log prints `woke after … h asleep … (~x mA)`.
+- **T2, awake idle:** flash `sticks3_powertest`, unplug,
   and leave it on the idle face for 45 minutes. Then plug in and run `kai-power`.
-- **T3, real use:** normal firmware, full charge, normal use until it dies. The telemetry gives
+- **T3, real use:** `sticks3_telemetry`, full charge, normal use until it dies. The telemetry gives
   runtime and the time spent in each state.
 
 Voltage readings on USB power reflect the charger, not the battery, so only unplugged stretches count.
+Reflash the release build (`pio run -e sticks3 -t upload`) when you're done.

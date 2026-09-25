@@ -37,14 +37,15 @@ M5StickS3 ──── WebSocket (LAN) ────▶ home server: kai-relay  �
 
 Every answer is spoken **and** shown: the reply screen has a mini face in the header, the tool's card
 (tides, conditions, ...) and then a live transcript of what Kai says. It follows along while Kai talks,
-jumps back to the top when it's done, and returns to the face after a minute.
+jumps back to the top when it's done, and returns to the face 20 seconds later.
 
-Power: after a minute idle Kai falls asleep and the backlight dims. On battery, after three minutes the
-Stick deep-sleeps (Wi-Fi off); either button wakes it in a few seconds. Holding the front button to wake
+Power: after 15 seconds idle Kai falls asleep and the backlight dims. On battery, after 45 seconds the
+Stick deep-sleeps (Wi-Fi and screen off); either button wakes it in a few seconds. Holding the front button to wake
 starts recording immediately, so you can just press and talk: speech is buffered until the relay
 reconnects. On USB it never deep-sleeps, it only turns the screen off after four minutes, so it answers
 instantly on a desk. Deep sleep drops Gemini's conversation context.
 
+Expect about 6 days per charge at 20 questions a day (projected; see [docs/POWER.md](docs/POWER.md)).
 The display is an LCD, so the backlight, not pixel colour, is what costs battery; the dark theme is for
 looks. Build with `-DKAI_LIGHT_THEME` for the cream variant.
 

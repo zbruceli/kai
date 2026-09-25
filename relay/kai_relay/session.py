@@ -1,8 +1,8 @@
 """Bridges one Stick WebSocket to one Gemini Live session.
 
 Device -> relay
-    text   {"type": "hello", "device": str, "battery": int, "fw": str, "sleep"?: {slept_s, mv_before, mv_after}}
-    text   {"type": "power", "mv", "usb", "mode", "bright", "wifi_ps", "rssi", ...}  every 30 s -> data/power.csv
+    text   {"type": "hello", "device": str, "battery": int, "fw": str, "sleep"?: {...}}
+    text   {"type": "power", ...}   measurement firmware only (docs/POWER.md): logged to data/power.csv
     text   {"type": "ptt_start"}            button A pressed (also barges in on Kai speaking)
     binary PCM16 mono 16 kHz mic audio      only between ptt_start and ptt_end
     text   {"type": "ptt_end"}              button A released

@@ -51,7 +51,7 @@ arrives, so the answer isn't lost.
 | `audio.cpp` | Half-duplex ES8311 codec: 3-buffer mic rotation, 2 MB speaker ring, loudness boost |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
-**Power (on battery):** dim after 1 minute, deep sleep after 3 minutes. Buttons (GPIO 11/12) wake it
+**Power (on battery):** dim after 15 s, deep sleep after 45 s; the CPU runs at 80 MHz and Wi-Fi naps whenever no audio streams, and deep sleep cuts the LCD/audio rail (details in `POWER.md`). Buttons (GPIO 11/12) wake it
 through EXT1. The Wi-Fi channel/BSSID and the relay IP are kept in RTC memory so reconnecting is fast.
 Waking with the front button held records straight into PSRAM, and that audio is sent once the relay
 connects. On USB the Stick never deep-sleeps.

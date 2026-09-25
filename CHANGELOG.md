@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.0: power
+
+Battery life, projected from the power budget in docs/POWER.md (measurements pending): **~6 days at 20
+questions a day**, up from ~1.3.
+
+- Screen redraws only when something changes: drawing time 50% → 8%, main-loop rate 294 → 75 per
+  second (measured).
+- CPU drops to 80 MHz and Wi-Fi uses maximum power saving whenever no audio is streaming.
+- The speaker amp and ES8311 codec power up only to speak or listen.
+- The 5V boost is switched off; M5Unified had left it running. The IMU sleeps.
+- Deep sleep cuts the LCD/audio power rail (PM1 GPIO2).
+- Shorter wait after each answer: reply screen 20 s, dim at 15 s, deep sleep at 45 s on battery.
+- Power budget and measurement protocol: `docs/POWER.md`. Measurement firmware builds
+  (`sticks3_telemetry`, `sticks3_powertest`) plus `kai-power` estimate current from battery voltage.
+  Release builds send no telemetry.
+
 ## v0.7.0: first release
 
 Kai, a pocket AI pal on an M5StickS3, with a home relay that talks to Gemini Live.

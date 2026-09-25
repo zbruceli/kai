@@ -1,6 +1,6 @@
 [project]
 name = "kai-relay"
-version = "0.7.0"
+version = "0.8.0"
 description = "Home relay between the Kai M5StickS3 and the Gemini Live API"
 requires-python = ">=3.11"
 license = "MIT"

@@ -11,7 +11,9 @@
 #include <driver/rtc_io.h>
 #include <esp_heap_caps.h>
 #include <esp_sleep.h>
+#ifdef KAI_TELEMETRY
 #include <sys/time.h>
+#endif
 
 #include "audio.h"
 #include "face.h"
@@ -35,9 +37,11 @@ static constexpr uint32_t CPU_MHZ_IDLE = 80;                // lowest speed Wi-F
 static constexpr uint8_t PM1_ADDR = 0x6E, PM1_GPIO_OUT = 0x11, PM1_L3B_BIT = 1 << 2;
 static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;  // on USB
 
-// Power telemetry: battery voltage and state are reported to the relay (relay/data/power.csv) so
-// consumption per state can be measured from the voltage slope; see docs/POWER.md.
+#ifdef KAI_TELEMETRY
+// Measurement builds only (env:sticks3_telemetry / sticks3_powertest): battery voltage and state go to
+// the relay (relay/data/power.csv) so consumption per state can be estimated; see docs/POWER.md.
 static constexpr uint32_t POWER_REPORT_MS = 30000;
+#endif
 
 // Buttons (active low), both RTC-capable so they can wake the chip from deep sleep.
 static constexpr gpio_num_t PIN_BTN_A = GPIO_NUM_11;
@@ -52,8 +56,10 @@ static constexpr size_t EARLY_TALK_BYTES = audio::MIC_RATE * 2 * EARLY_TALK_MAX_
 RTC_DATA_ATTR static uint8_t cachedBssid[6];
 RTC_DATA_ATTR static int32_t cachedChannel = 0;
 RTC_DATA_ATTR static uint32_t cachedRelayIp = 0;
+#ifdef KAI_TELEMETRY
 RTC_DATA_ATTR static int64_t sleptAtUs = 0;  // RTC wall clock keeps running through deep sleep
 RTC_DATA_ATTR static int16_t sleptMv = 0;
+#endif
 
 enum class Mode { Offline, Idle, Listening, Thinking, Reply };
 
@@ -79,11 +85,13 @@ static uint32_t lastInteraction = 0;
 static uint32_t lastBatteryRead = 0;
 static bool dimmed = false;
 static bool screenOff = false;
+#ifdef KAI_TELEMETRY
 static uint8_t brightness = 0;
 static int16_t wakeMv = 0;  // battery voltage at boot, before Wi-Fi loads it
 static uint32_t lastPowerReport = 0;
 static uint32_t loopCount = 0;
 static uint32_t renderBusyUs = 0;
+#endif
 static bool busy = true;  // radio awake + fast CPU
 
 static bool earlyTalk = false;       // capturing speech before the relay is connected
@@ -122,15 +130,19 @@ static void setMode(Mode m) {
 }
 
 static void backlight(uint8_t level) {
+#ifdef KAI_TELEMETRY
   brightness = level;
+#endif
   M5.Display.setBrightness(level);
 }
 
+#ifdef KAI_TELEMETRY
 static int64_t rtcNowUs() {
   timeval tv;
   gettimeofday(&tv, nullptr);
   return int64_t(tv.tv_sec) * 1000000 + tv.tv_usec;
 }
+#endif
 
 static void wake() {
   lastInteraction = millis();
@@ -148,8 +160,10 @@ static void wake() {
 [[noreturn]] static void goToDeepSleep() {
   log_i("deep sleep");
   if (wsConnected) ws.disconnect();
+#ifdef KAI_TELEMETRY
   sleptMv = M5.Power.getBatteryVoltage();
   sleptAtUs = rtcNowUs();
+#endif
   audio::powerDown();
   M5.Imu.sleep();
   backlight(0);
@@ -170,9 +184,6 @@ static void wake() {
   esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
 #endif
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keeps the pull-ups alive
-#ifdef KAI_SLEEP_TEST
-  esp_sleep_enable_timer_wakeup(10 * 1000000ULL);
-#endif
   for (gpio_num_t pin : {PIN_BTN_A, PIN_BTN_B}) {
     rtc_gpio_pullup_en(pin);
     rtc_gpio_pulldown_dis(pin);
@@ -192,9 +203,6 @@ static void powerSave(uint32_t now) {
     if (mode == Mode::Idle) face::setExpr(Expr::Sleeping);
     dimmed = true;
   }
-#ifdef KAI_SLEEP_TEST  // exercise the sleep/wake path on USB: sleeps after 20 s, wakes on a 10 s timer
-  if (idle > 20000) goToDeepSleep();
-#endif
   if (audio::onUsbPower()) {
     if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
       backlight(0);
@@ -236,6 +244,7 @@ static void sendMic(const int16_t* samples, size_t count) {
 
 static void discardMic(const int16_t*, size_t) {}
 
+#ifdef KAI_TELEMETRY
 static const char* modeName(Mode m) {
   switch (m) {
     case Mode::Offline: return "offline";
@@ -268,6 +277,7 @@ static void sendPowerReport(uint32_t now) {
   loopCount = 0;
   renderBusyUs = 0;
 }
+#endif
 
 // Anything Kai sends back (speech, words, a card) lands on the reply screen, whatever we were showing.
 static void replyActivity() {
@@ -366,12 +376,14 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
+#ifdef KAI_TELEMETRY
       if (wokeFromSleep && sleptAtUs && !everConnected) {  // one deep-sleep measurement per wake
         JsonObject sleep = hello["sleep"].to<JsonObject>();
         sleep["slept_s"] = (rtcNowUs() - sleptAtUs) / 1000000;
         sleep["mv_before"] = sleptMv;
         sleep["mv_after"] = wakeMv;
       }
+#endif
       String out;
       serializeJson(hello, out);
       ws.sendTXT(out);
@@ -564,7 +576,9 @@ void setup() {
   M5.Power.setExtOutput(false);  // 5V boost for Grove/Hat/IR: unused, and it was left running
   M5.Imu.sleep();                // not used yet
 
+#ifdef KAI_TELEMETRY
   wakeMv = M5.Power.getBatteryVoltage();
+#endif
   bool wokeToTalk = false;
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
     wokeFromSleep = true;
@@ -644,6 +658,7 @@ void loop() {
     if (mode != Mode::Listening) audio::updateVolume();  // follows USB plug/unplug
   }
   powerSave(now);
+#ifdef KAI_TELEMETRY
   loopCount++;
   if (!screenOff) {
     const uint32_t t0 = micros();
@@ -651,6 +666,9 @@ void loop() {
     renderBusyUs += micros() - t0;
   }
   if (wsConnected && now - lastPowerReport >= POWER_REPORT_MS) sendPowerReport(now);
+#else
+  if (!screenOff) face::render();
+#endif
 
   // Let FreeRTOS idle the CPU instead of spinning. Listening already blocks in the mic read; the
   // speaker has 150 ms of queued audio, so a few ms here never starves it.
