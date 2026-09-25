@@ -1,5 +1,6 @@
 """Trip notes: SQLite is the source of truth, each trip is mirrored to a Markdown file (Obsidian-friendly)."""
 
+import logging
 import re
 import sqlite3
 from datetime import datetime
@@ -8,6 +9,7 @@ from pathlib import Path
 from .registry import ToolContext, ToolError, ToolResult, card, tool
 
 INBOX = "Inbox"
+log = logging.getLogger("kai.notes")
 
 
 class NotesStore:
@@ -50,7 +52,10 @@ class NotesStore:
                 "INSERT INTO notes (created_at, trip, text, tags) VALUES (?, ?, ?, ?)",
                 (now.isoformat(timespec="seconds"), trip, text, tag_str),
             )
-        self._append_markdown(trip, now, text, tag_str)
+        try:
+            self._append_markdown(trip, now, text, tag_str)
+        except OSError:
+            log.warning("couldn't mirror note to Markdown for trip %r", trip, exc_info=True)
         return {"id": cur.lastrowid, "trip": trip, "text": text, "tags": tag_str}
 
     def list(self, trip: str | None = None, limit: int = 5) -> list[dict]:
@@ -63,10 +68,10 @@ class NotesStore:
         return [dict(r) for r in rows]
 
     def count(self, trip: str) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM notes WHERE trip = ?", (trip,)).fetchone()[0]
+        return self.db.execute("SELECT COUNT(*) FROM notes WHERE trip = ? COLLATE NOCASE", (trip,)).fetchone()[0]
 
     def markdown_path(self, trip: str) -> Path:
-        slug = re.sub(r"[^\w\- ]+", "", trip).strip() or INBOX
+        slug = re.sub(r"[^\w\- ]+", "", trip).strip()[:80] or INBOX
         return self.notes_dir / f"{slug}.md"
 
     def _append_markdown(self, trip: str, now: datetime, text: str, tags: str) -> None:

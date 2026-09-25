@@ -24,18 +24,19 @@ def resolve_day(day: str | None, today: date) -> date:
     d = day.strip().lower()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):  # tolerate a model that still sends ISO dates
         return date.fromisoformat(d)
-    if "day after" in d or "overmorrow" in d:
+    # Word boundaries matter: "sunday afternoon" contains "day after", "today" contains "day".
+    if re.search(r"\bday after\b", d) or "overmorrow" in d:
         return today + timedelta(days=2)
-    if d.startswith("tomorrow") or d.startswith("tmr"):
+    if re.match(r"(tomorrow|tmr)\b", d):
         return today + timedelta(days=1)
-    if d in ("today", "tonight", "now", "right now") or d.startswith(("this ", "today", "later")):
-        return today
     for i, name in enumerate(WEEKDAYS):
-        if name in d:
+        if re.search(rf"\b{name}\b", d):
             delta = (i - today.weekday()) % 7
-            if delta == 0 and "next" in d:
+            if delta == 0 and re.search(r"\bnext\b", d):
                 delta = 7
             return today + timedelta(days=delta)
+    if re.match(r"(today|tonight|now|right now|this|later)\b", d):
+        return today
     m = re.search(r"in (\d+) days?", d)
     if m:
         return today + timedelta(days=int(m.group(1)))

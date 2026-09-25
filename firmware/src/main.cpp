@@ -16,7 +16,7 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.6.0";
+static constexpr const char* FW_VERSION = "0.7.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
@@ -53,6 +53,7 @@ static bool everConnected = false;
 static bool wokeFromSleep = false;
 static uint32_t wsBeganAt = 0;
 static bool usedRelayCache = false;
+static bool connectedSinceBegin = false;
 static uint32_t wifiBeganAt = 0;
 static bool usedWifiCache = false;
 static bool wifiCached = false;
@@ -78,6 +79,7 @@ static size_t earlyLen = 0;
 static void setMode(Mode m) {
   mode = m;
   modeSince = millis();
+  lastInteraction = modeSince;  // e.g. a reply timing out shouldn't dim or deep-sleep at once
   switch (m) {
     // Freshly woken and still reconnecting: Kai is waking up, not broken.
     case Mode::Offline:   face::setExpr(wokeFromSleep && !everConnected ? Expr::Sleeping : Expr::Offline); break;
@@ -274,6 +276,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
     case WStype_CONNECTED: {
       wsConnected = true;
       everConnected = true;
+      connectedSinceBegin = true;
       JsonDocument hello;
       hello["type"] = "hello";
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
@@ -340,7 +343,8 @@ static void startRelayConnection() {
       // Arduino's DNS doesn't do mDNS; ask explicitly.
       static bool mdnsStarted = false;
       if (!mdnsStarted) mdnsStarted = MDNS.begin("kai-stick");
-      IPAddress ip = MDNS.queryHost(host.substring(0, host.length() - 6), 3000);
+      // Blocks the loop (no redraw, no mic) while it waits, so keep it short and retry instead.
+      IPAddress ip = MDNS.queryHost(host.substring(0, host.length() - 6), 1000);
       if (ip == IPAddress()) {
         if (!earlyTalk) face::setStatusText(String("can't find ") + host);
         return;  // retried from loop()
@@ -356,6 +360,7 @@ static void startRelayConnection() {
   ws.enableHeartbeat(15000, 3000, 2);
   wsStarted = true;
   wsBeganAt = millis();
+  connectedSinceBegin = false;
   if (!earlyTalk) face::setStatusText(wokeFromSleep ? "waking up..." : "finding relay...");
 }
 
@@ -371,10 +376,15 @@ static void maintainConnection() {
       WiFi.begin(WIFI_SSID, WIFI_PASS);
     }
     if (!earlyTalk) {
+      if (mode == Mode::Listening) audio::stopMic(discardMic);
       if (mode != Mode::Offline) setMode(Mode::Offline);
       face::setStatusText(wokeFromSleep && !everConnected ? "waking up..." : "connecting wifi...");
     }
     return;
+  }
+  if (wsConnected && mode == Mode::Offline) {  // Wi-Fi blipped but the relay socket survived
+    face::setStatusText("");
+    setMode(Mode::Idle);
   }
   if (!wifiCached) {
     memcpy(cachedBssid, WiFi.BSSID(), 6);
@@ -383,7 +393,7 @@ static void maintainConnection() {
   }
 
   // The relay may have a new address since we cached it: drop the cache and look it up again.
-  if (wsStarted && !wsConnected && usedRelayCache && now - wsBeganAt > 6000) {
+  if (wsStarted && !connectedSinceBegin && usedRelayCache && now - wsBeganAt > 6000) {
     ws.disconnect();
     wsStarted = false;
     cachedRelayIp = 0;

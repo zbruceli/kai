@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from astral import Observer
-from astral.sun import SunDirection, blue_hour, golden_hour
+from astral.sun import SunDirection, blue_hour, golden_hour, sun
 
 from . import geo
 from .days import DAY_PARAM, resolve_day
@@ -157,10 +157,12 @@ async def get_weather(ctx: ToolContext, place: str | None = None, day: str | Non
     else:
         lines = [f"{cur['temperature_2m']:.0f}{deg} {sky(cur['weather_code'])}"]
     lines.append(f"Hi {high:.0f}{deg}  Lo {low:.0f}{deg}  Rain {rain_max or 0}%")
+    winds = [r["wind"] for r in hourly if r["wind"] is not None]
+    gusts = [r["gusts"] for r in hourly if r["gusts"] is not None]
+    if winds:
+        gust = f" g{max(gusts):.0f}" if gusts else ""
+        lines.append(f"Wind {min(winds):.0f}-{max(winds):.0f}{ws} {hourly[0]['wind_from']}{gust}")
     if hourly:
-        winds = [r["wind"] for r in hourly]
-        gusts = max(r["gusts"] for r in hourly)
-        lines.append(f"Wind {min(winds):.0f}-{max(winds):.0f}{ws} {hourly[0]['wind_from']} g{gusts:.0f}")
         if hourly[0].get("waves") is not None:
             lines.append(f"Waves {hourly[0]['waves']:.1f}{lu} @{hourly[0]['swell_period_s']:.0f}s")
     lines.append(f"Sun {short_time(sunrise)}-{short_time(sunset)}")
@@ -220,9 +222,9 @@ async def get_sun_times(ctx: ToolContext, place: str | None = None, day: str | N
     gh_am, gh_pm = span(golden_hour, SunDirection.RISING), span(golden_hour, SunDirection.SETTING)
     bh_am, bh_pm = span(blue_hour, SunDirection.RISING), span(blue_hour, SunDirection.SETTING)
 
-    d = _day_index(fc["daily"]["time"], day.isoformat(), tz)
-    sunrise = datetime.fromisoformat(fc["daily"]["sunrise"][d])
-    sunset = datetime.fromisoformat(fc["daily"]["sunset"][d])
+    # astral works for any date; the forecast only covers the next few days (used for cloud cover).
+    s = sun(obs, date=day, tzinfo=tz)
+    sunrise, sunset = s["sunrise"].replace(tzinfo=None), s["sunset"].replace(tzinfo=None)
 
     def cloud_at(t: datetime) -> int | None:
         key = t.replace(minute=0).strftime("%Y-%m-%dT%H:%M")

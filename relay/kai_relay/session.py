@@ -15,6 +15,7 @@ Relay -> device
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -73,6 +74,10 @@ class KaiSession:
         self._card_sent = False
         self._last_place: str | None = None
         self._last_tool: str | None = None
+        self._utterance_id = 0
+        self._tasks: set[asyncio.Task] = set()
+        self._model_busy = False  # Gemini is mid-answer
+        self._drop_turn = False   # user hushed it with a tap: discard until turn_complete
         self._last_activity = time.monotonic()
 
     # ---- device side -------------------------------------------------------
@@ -84,12 +89,21 @@ class KaiSession:
                 self._last_activity = time.monotonic()
                 if isinstance(msg, bytes):
                     await self._on_mic(msg)
+                    continue
+                try:
+                    control = json.loads(msg)
+                except ValueError:
+                    control = None
+                if isinstance(control, dict):
+                    await self._on_control(control)
                 else:
-                    await self._on_control(json.loads(msg))
+                    log.warning("[%s] ignoring malformed message", self.device)
         except ConnectionClosed:
             pass
         finally:
             idle.cancel()
+            for task in self._tasks:
+                task.cancel()
             await self._close_live()
             log.info("[%s] device disconnected", self.device)
 
@@ -97,10 +111,12 @@ class KaiSession:
         kind = m.get("type")
         if kind == "hello":
             self.device = m.get("device", "?")
+            # No reply needed: the device shows idle itself, and a "state: idle" here would knock it out of
+            # Thinking when it replays speech captured while waking from deep sleep.
             log.info("[%s] hello fw=%s battery=%s%%", self.device, m.get("fw"), m.get("battery"))
-            await self._send({"type": "state", "state": "idle"})
         elif kind == "ptt_start":
             self._ptt = True
+            self._utterance_id += 1
             self._utterance = ""
             self._card_sent = False
             self._activity_open = False
@@ -118,6 +134,10 @@ class KaiSession:
                 await self._send({"type": "state", "state": "thinking"})
                 await self._safe_live(self._live.send_realtime_input(activity_end=types.ActivityEnd()))
             else:
+                # A tap, too short to send. The device already stopped Kai talking; if Gemini is still
+                # generating, drop the rest of that answer instead of resuming it mid-sentence.
+                if self._model_busy:
+                    self._drop_turn = True
                 await self._send({"type": "state", "state": "idle"})
         else:
             log.debug("[%s] ignoring %s", self.device, m)
@@ -144,10 +164,8 @@ class KaiSession:
         await self._live.send_realtime_input(audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={IN_RATE}"))
 
     async def _send(self, obj: dict) -> None:
-        try:
+        with contextlib.suppress(ConnectionClosed):
             await self.ws.send(json.dumps(obj))
-        except ConnectionClosed:
-            pass
 
     async def _send_audio(self, pcm: bytes) -> None:
         try:
@@ -232,16 +250,15 @@ class KaiSession:
             await self._send({"type": "state", "state": "thinking"})
             calls = msg.tool_call.function_calls or []
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
-            for fc, r in zip(calls, results):
+            for fc, r in zip(calls, results, strict=True):
                 if (fc.args or {}).get("place"):
                     self._last_place = fc.args["place"]
                 if r.card:
                     self._last_tool = fc.name
-                if r.card:
                     await self._send_card(r.card)
             await live.send_tool_response(
                 function_responses=[
-                    types.FunctionResponse(id=fc.id, name=fc.name, response=r.data) for fc, r in zip(calls, results)
+                    types.FunctionResponse(id=fc.id, name=fc.name, response=r.data) for fc, r in zip(calls, results, strict=True)
                 ]
             )
 
@@ -253,13 +270,16 @@ class KaiSession:
         if sc.input_transcription and sc.input_transcription.text:
             self._heard += sc.input_transcription.text
             self._utterance += sc.input_transcription.text
-        # While the button is held, anything Kai was still saying is stale.
-        if sc.model_turn and not self._ptt:
+        if sc.model_turn:
+            self._model_busy = True
+        # While the button is held, or after a hushing tap, anything Kai was still saying is stale.
+        mute = self._ptt or self._drop_turn
+        if sc.model_turn and not mute:
             for part in sc.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
                     self._audio_bytes += len(part.inline_data.data)
                     await self._send_audio(part.inline_data.data)
-        if sc.output_transcription and sc.output_transcription.text and not self._ptt:
+        if sc.output_transcription and sc.output_transcription.text and not mute:
             delta = sc.output_transcription.text
             self._caption += delta
             await self._send({"type": "caption", "delta": screen_text(delta)})
@@ -270,9 +290,12 @@ class KaiSession:
             log.info("[%s] kai (%.1fs audio): %s", self.device, speech_s, self._caption.strip() or "-")
             if self._caption.strip() and not self._audio_bytes:
                 log.warning("[%s] turn had a transcript but no audio", self.device)
+            self._model_busy = self._drop_turn = False
             if self._audio_bytes and not self._card_sent:
                 self._card_sent = True  # at most one backstop per utterance
-                asyncio.create_task(self._backstop_card(self._utterance))
+                task = asyncio.create_task(self._backstop_card(self._utterance, self._utterance_id))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
             self._heard = self._caption = ""
             self._audio_bytes = 0
             await self._send({"type": "turn_complete"})
@@ -286,7 +309,7 @@ class KaiSession:
             "lines": [screen_text(line) for line in card["lines"]],
         })
 
-    async def _backstop_card(self, said: str) -> None:
+    async def _backstop_card(self, said: str, utterance_id: int) -> None:
         """Gemini answered without a tool; if the question clearly wanted one, run it so a card appears."""
         inferred = backstop.infer_tool_call(said, self._last_place, self._last_tool)
         if not inferred:
@@ -294,6 +317,8 @@ class KaiSession:
         name, args = inferred
         log.info("[%s] backstop: Gemini skipped the tool, running %s(%s)", self.device, name, args)
         result = await tools.call(name, args, self.ctx)
+        if utterance_id != self._utterance_id:
+            return  # the user has asked something else since; this card would be stale
         if result.card and "error" not in result.data:
             if args.get("place"):
                 self._last_place = args["place"]

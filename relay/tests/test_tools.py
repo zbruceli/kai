@@ -130,6 +130,11 @@ def test_resolve_day():
     with pytest.raises(tools.ToolError):
         resolve_day("whenever", thu)
     assert describe_day(date(2026, 9, 26), thu) == "Sat 9/26"
+    # Regressions: substrings used to win ("sun-day after-noon", "to-day after-noon", "this saturday").
+    assert resolve_day("sunday afternoon", thu) == date(2026, 9, 27)
+    assert resolve_day("today afternoon", thu) == thu
+    assert resolve_day("this saturday", thu) == date(2026, 9, 26)
+    assert resolve_day("this evening", thu) == thu
 
 
 def test_backstop_infers_tool_calls():

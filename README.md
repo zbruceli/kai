@@ -20,7 +20,7 @@ M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay �
 |---|---|---|
 | "Who won the Giants game?" / "Is Sam's Chowder House open?" | Google Search | — |
 | "Start a trip called Pigeon Point October" / "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | `start_trip`, `save_note` | Noted #3 |
-| "When's high tide at Pillar Point tomorrow?" | `get_tides` | next 5 highs/lows |
+| "When's high tide at Pillar Point tomorrow?" | `get_tides` | the day's highs/lows (or the next four) |
 | "What's the weather in San Mateo?" / "How's the swell at Half Moon Bay this afternoon?" | `get_weather` | temp + sky, hi/lo, rain, wind, waves, sun |
 | "When's golden hour at Pescadero Saturday?" | `get_sun_times` | golden/blue hour, sunset clouds |
 | "Find parking near the Ferry Building" | `find_parking` | 5 closest, by distance |
@@ -54,7 +54,7 @@ looks. Build with `-DKAI_LIGHT_THEME` for the cream variant.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh      # once
-git clone <this repo> ~/kai && cd ~/kai/relay
+git clone https://github.com/zbruceli/kai ~/kai && cd ~/kai/relay
 cp .env.example .env && nano .env                     # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
 uv sync
 uv run kai-relay                                      # prints ws://<pi-ip>:8765/ws
@@ -93,6 +93,14 @@ cd relay
 uv run pytest               # offline unit tests
 uv run pytest -m network -s # hits NOAA / Open-Meteo for real, prints the cards
 ```
+
+## Docs
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit, the wire protocol, adding a tool
+- [CHANGELOG.md](CHANGELOG.md)
+
+Releases are source only. The firmware compiles your Wi-Fi password and device token in from
+`secrets.h`, so build it yourself; never share a built `firmware.bin`.
 
 ## Layout
 

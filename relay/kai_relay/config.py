@@ -39,6 +39,10 @@ def load_settings() -> Settings:
     if missing:
         raise SystemExit(f"Missing required settings: {', '.join(missing)} (see .env.example)")
 
+    if env["KAI_DEVICE_TOKEN"] == "change-me" or len(env["KAI_DEVICE_TOKEN"]) < 12:
+        raise SystemExit("KAI_DEVICE_TOKEN is the example value or too short; generate one with:\n"
+                         "  python3 -c 'import secrets; print(secrets.token_urlsafe(18))'")
+
     units = env.get("KAI_UNITS", "imperial").lower()
     if units not in ("imperial", "metric"):
         raise SystemExit("KAI_UNITS must be 'imperial' or 'metric'")

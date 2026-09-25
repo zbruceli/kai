@@ -29,7 +29,7 @@ async def run() -> None:
     notes = tools.NotesStore(settings.data_dir / "kai.db", settings.notes_dir)
     expected_auth = f"Bearer {settings.device_token}"
 
-    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "kai-relay/0.1"}) as http:
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "kai-relay/0.7"}) as http:
         ctx = tools.ToolContext(settings=settings, http=http, notes=notes)
 
         async def handler(ws: ServerConnection) -> None:
