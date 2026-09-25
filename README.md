@@ -110,6 +110,7 @@ uv run pytest -m network -s # hits NOAA / Open-Meteo for real, prints the cards
 ## Docs
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit, the wire protocol, adding a tool
+- [docs/POWER.md](docs/POWER.md): power budget, battery life, and how to measure it
 - [CHANGELOG.md](CHANGELOG.md)
 
 Releases are source only. The firmware compiles your Wi-Fi password and device token in from
