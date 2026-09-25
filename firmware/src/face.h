@@ -1,5 +1,5 @@
-// Kai's look: an original Tamagotchi-style pixel pet (pastel theme) on the 240x135 display, drawn into
-// an off-screen canvas to avoid flicker.
+// Kai's look: an original Tamagotchi-style pixel pet on the 240x135 display, drawn into an off-screen
+// canvas to avoid flicker. Pastel on deep plum by default; build with -DKAI_LIGHT_THEME for cream.
 //
 // Two views:
 //   face  - Kai at 5x pixel size with an icon bar, wandering, blinking and reacting to its state

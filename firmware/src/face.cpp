@@ -339,7 +339,7 @@ void drawReply(uint32_t now, uint32_t tick) {
   canvas.setFont(&fonts::FreeSansBold9pt7b);
   while (title.length() > 1 && canvas.textWidth(title) > titleMax) title.remove(title.length() - 1);
   canvas.setTextDatum(middle_left);
-  canvas.setTextColor(T.line);
+  canvas.setTextColor(T.text);
   canvas.drawString(title, TITLE_X, HEADER_H / 2);
   if (hasIcon) drawIcon(replyCard.icon, W - 18, HEADER_H / 2 - 7, T.iconOn);
   canvas.drawFastHLine(4, HEADER_H, W - 8, T.iconOff);
@@ -365,7 +365,7 @@ void drawReply(uint32_t now, uint32_t tick) {
 
 void begin() {
   M5.Display.setRotation(1);
-  M5.Display.setBrightness(120);
+  M5.Display.setBrightness(90);  // BRIGHTNESS_AWAKE in main.cpp
   canvas.setColorDepth(16);
   canvas.createSprite(W, H);
 
@@ -375,22 +375,21 @@ void begin() {
   }
 
   auto c = [](uint32_t rgb) { return canvas.color565(rgb >> 16, (rgb >> 8) & 0xff, rgb & 0xff); };
-  T = {
-      .bg = c(0xfff3e3),
-      .line = c(0x4b3a63),
-      .body = c(0xcdb9ff),
-      .eye = c(0x4b3a63),
-      .hl = c(0xffffff),
-      .cheek = c(0xff9fb8),
-      .accent = c(0xffc94d),
-      .tongue = c(0xff7d9e),
-      .fx = c(0x4b3a63),
-      .iconOn = c(0x4b3a63),
-      .iconOff = c(0xeadcc9),
-      .text = c(0x4b3a63),
-      .textSoft = c(0x7d6f95),
-      .thumb = c(0x9d86e9),
+#ifdef KAI_LIGHT_THEME
+  T = {  // pastel on cream
+      .bg = c(0xfff3e3), .line = c(0x4b3a63), .body = c(0xcdb9ff), .eye = c(0x4b3a63),
+      .hl = c(0xffffff), .cheek = c(0xff9fb8), .accent = c(0xffc94d), .tongue = c(0xff7d9e),
+      .fx = c(0x4b3a63), .iconOn = c(0x4b3a63), .iconOff = c(0xeadcc9), .text = c(0x4b3a63),
+      .textSoft = c(0x7d6f95), .thumb = c(0x9d86e9),
   };
+#else
+  T = {  // pastel on deep plum (default)
+      .bg = c(0x16111f), .line = c(0x6b55a3), .body = c(0xcdb9ff), .eye = c(0x2a1f3d),
+      .hl = c(0xffffff), .cheek = c(0xff9fb8), .accent = c(0xffc94d), .tongue = c(0xff7d9e),
+      .fx = c(0xcdb9ff), .iconOn = c(0xcdb9ff), .iconOff = c(0x2e2540), .text = c(0xefe6ff),
+      .textSoft = c(0xa99bc4), .thumb = c(0x9d86e9),
+  };
+#endif
 }
 
 void setExpr(Expr e) { expr = e; }

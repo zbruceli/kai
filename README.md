@@ -39,6 +39,11 @@ Every answer is spoken **and** shown: the reply screen has a mini face in the he
 (tides, conditions, ...) and then a live transcript of what Kai says. It follows along while Kai talks,
 jumps back to the top when it's done, and returns to the face after a minute.
 
+Power: after a minute idle Kai falls asleep and the backlight dims; after four minutes the screen turns
+off. Any button wakes it (the front button also starts listening). The display is an LCD, so the
+backlight, not pixel colour, is what costs battery; the dark theme is for looks. Build with
+`-DKAI_LIGHT_THEME` for the cream variant.
+
 ## Setup
 
 ### 1. Relay on the Raspberry Pi

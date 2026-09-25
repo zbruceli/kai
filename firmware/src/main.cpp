@@ -13,11 +13,16 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.4.0";
+static constexpr const char* FW_VERSION = "0.5.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
+// Power: on this LCD the backlight is what costs battery (pixel colour doesn't matter), so dim it, then
+// switch it off. Any button wakes Kai; the front button also starts listening straight away.
+static constexpr uint8_t BRIGHTNESS_AWAKE = 90;
+static constexpr uint8_t BRIGHTNESS_DIM = 15;
 static constexpr uint32_t DIM_AFTER_MS = 60000;
+static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;
 
 enum class Mode { Offline, Idle, Listening, Thinking, Reply };
 
@@ -34,6 +39,7 @@ static uint32_t lastReplyActivity = 0;
 static uint32_t lastInteraction = 0;
 static uint32_t lastBatteryRead = 0;
 static bool dimmed = false;
+static bool screenOff = false;
 
 // ---------------------------------------------------------------------------
 
@@ -54,10 +60,29 @@ static void setMode(Mode m) {
 
 static void wake() {
   lastInteraction = millis();
+  if (screenOff) {
+    M5.Display.wakeup();
+    screenOff = false;
+  }
   if (dimmed) {
-    M5.Display.setBrightness(120);
+    M5.Display.setBrightness(BRIGHTNESS_AWAKE);
     dimmed = false;
     if (mode == Mode::Idle) face::setExpr(Expr::Idle);
+  }
+}
+
+static void powerSave(uint32_t now) {
+  if (mode != Mode::Idle && mode != Mode::Offline) return;
+  const uint32_t idle = now - lastInteraction;
+  if (!dimmed && idle > DIM_AFTER_MS) {
+    M5.Display.setBrightness(BRIGHTNESS_DIM);
+    if (mode == Mode::Idle) face::setExpr(Expr::Sleeping);
+    dimmed = true;
+  }
+  if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
+    M5.Display.setBrightness(0);
+    M5.Display.sleep();
+    screenOff = true;
   }
 }
 
@@ -219,6 +244,11 @@ static void showStatus() {
 }
 
 static void handleButtons() {
+  // With the screen off, the side button only wakes Kai (so it doesn't also scroll or open status).
+  if (screenOff && M5.BtnB.wasPressed()) {
+    wake();
+    return;
+  }
   if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed()) wake();
 
   // Front: push to talk (also barges in while Kai is talking).
@@ -326,11 +356,6 @@ void loop() {
     face::setBattery(M5.Power.getBatteryLevel());
     if (mode != Mode::Listening) audio::updateVolume();  // follows USB plug/unplug
   }
-  if (!dimmed && mode == Mode::Idle && now - lastInteraction > DIM_AFTER_MS) {
-    M5.Display.setBrightness(20);
-    face::setExpr(Expr::Sleeping);
-    dimmed = true;
-  }
-
-  face::render();
+  powerSave(now);
+  if (!screenOff) face::render();
 }
