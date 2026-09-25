@@ -13,7 +13,7 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.3.0";
+static constexpr const char* FW_VERSION = "0.4.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
@@ -57,7 +57,16 @@ static void wake() {
   if (dimmed) {
     M5.Display.setBrightness(120);
     dimmed = false;
+    if (mode == Mode::Idle) face::setExpr(Expr::Idle);
   }
+}
+
+static Icon iconFromName(const char* name) {
+  if (!strcmp(name, "mic")) return Icon::Mic;
+  if (!strcmp(name, "weather")) return Icon::Weather;
+  if (!strcmp(name, "fishing")) return Icon::Fishing;
+  if (!strcmp(name, "camera")) return Icon::Camera;
+  return Icon::None;
 }
 
 static void sendType(const char* type) {
@@ -94,6 +103,8 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     if (hushed || mode == Mode::Listening) return;
     Card c;
     c.title = doc["title"] | "";
+    c.icon = iconFromName(doc["icon"] | "");
+    c.happy = !strcmp(doc["mood"] | "", "happy");
     for (JsonVariant line : doc["lines"].as<JsonArray>()) {
       if (c.count == CARD_LINES) break;
       c.lines[c.count++] = line.as<const char*>();
@@ -317,6 +328,7 @@ void loop() {
   }
   if (!dimmed && mode == Mode::Idle && now - lastInteraction > DIM_AFTER_MS) {
     M5.Display.setBrightness(20);
+    face::setExpr(Expr::Sleeping);
     dimmed = true;
   }
 

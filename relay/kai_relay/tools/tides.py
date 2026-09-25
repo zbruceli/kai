@@ -94,5 +94,5 @@ async def get_tides(ctx: ToolContext, place: str | None = None, date: str | None
             "local_times": True,
             "tides": [{**t, "time": t["time"].strftime("%a %Y-%m-%d %H:%M")} for t in upcoming],
         },
-        card(f"Tides {station['name']}", lines),
+        card(f"Tides {station['name']}", lines, icon="fishing"),
     )

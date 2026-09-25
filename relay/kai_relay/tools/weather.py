@@ -185,7 +185,7 @@ async def get_weather(ctx: ToolContext, place: str | None = None, date: str | No
             "hourly": hourly,
             "coastal": marine is not None,
         },
-        card(p.name, lines),
+        card(p.name, lines, icon="weather"),
     )
 
 
@@ -249,5 +249,5 @@ async def get_sun_times(ctx: ToolContext, place: str | None = None, date: str | 
             "cloud_cover_pct_at_sunrise": cloud_at(sunrise),
             "cloud_cover_pct_at_sunset": clouds_set,
         },
-        card(f"Light {p.name}", lines),
+        card(f"Light {p.name}", lines, icon="camera"),
     )

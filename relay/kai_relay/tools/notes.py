@@ -94,7 +94,7 @@ async def save_note(ctx: ToolContext, text: str, tags: list[str] | None = None, 
     n = ctx.notes.count(note["trip"])
     return ToolResult(
         {"saved": True, "trip": note["trip"], "notes_in_trip": n},
-        card(f"Noted #{n}", [note["trip"], *_wrap(text, 4)]),
+        card(f"Noted #{n}", [note["trip"], *_wrap(text, 4)], icon="camera", mood="happy"),
     )
 
 
@@ -112,7 +112,7 @@ async def list_notes(ctx: ToolContext, trip: str | None = None, limit: int = 5) 
         raise ToolError(f"No notes yet{' for ' + trip if trip else ''}.")
     return ToolResult(
         {"notes": [{"when": n["created_at"], "trip": n["trip"], "text": n["text"]} for n in notes]},
-        card(trip or "Recent notes", [n["text"] for n in notes]),
+        card(trip or "Recent notes", [n["text"] for n in notes], icon="camera"),
     )
 
 
@@ -124,7 +124,7 @@ async def list_notes(ctx: ToolContext, trip: str | None = None, limit: int = 5) 
 )
 async def start_trip(ctx: ToolContext, name: str) -> ToolResult:
     ctx.notes.set_trip(name)
-    return ToolResult({"current_trip": name}, card("Trip started", [name, f"{datetime.now():%b %-d}"]))
+    return ToolResult({"current_trip": name}, card("Trip started", [name, f"{datetime.now():%b %-d}"], icon="camera", mood="happy"))
 
 
 @tool("end_trip", "Finish the current trip; later notes go to the Inbox.", {})
@@ -134,7 +134,7 @@ async def end_trip(ctx: ToolContext) -> ToolResult:
         raise ToolError("There's no trip in progress.")
     n = ctx.notes.count(trip)
     ctx.notes.set_trip(None)
-    return ToolResult({"ended_trip": trip, "notes": n}, card("Trip wrapped", [trip, f"{n} notes saved"]))
+    return ToolResult({"ended_trip": trip, "notes": n}, card("Trip wrapped", [trip, f"{n} notes saved"], icon="camera", mood="happy"))
 
 
 def _wrap(text: str, max_lines: int, width: int = 26) -> list[str]:

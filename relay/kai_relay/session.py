@@ -7,7 +7,7 @@ Device -> relay
     text   {"type": "ptt_end"}              button A released
 Relay -> device
     text   {"type": "state", "state": "idle" | "thinking"}
-    text   {"type": "card", "title": str, "lines": [str]}
+    text   {"type": "card", "title": str, "lines": [str], "icon"?: "mic"|"weather"|"fishing"|"camera", "mood"?: "happy"}
     text   {"type": "caption", "delta": str} next words of what Kai is saying (ASCII, for the screen)
     text   {"type": "interrupted"}           drop any queued speech
     text   {"type": "turn_complete"}
@@ -228,6 +228,7 @@ class KaiSession:
             for r in results:
                 if r.card:
                     await self._send({
+                        **r.card,
                         "type": "card",
                         "title": screen_text(r.card["title"]),
                         "lines": [screen_text(line) for line in r.card["lines"]],

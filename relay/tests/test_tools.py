@@ -106,3 +106,8 @@ def test_geocode_prefers_places_near_home():
     assert _pick(results, 37.46, -122.43, "San Mateo")["lat"] == 37.56          # near home wins
     assert _pick(results, 37.46, -122.43, "San Mateo, Philippines")["lat"] == 14.70  # explicit region wins
     assert _pick(results, None, None, "San Mateo")["lat"] == 14.70              # no home: top hit
+
+
+def test_note_card_is_happy_camera(ctx):
+    r = asyncio.run(tools.call("save_note", {"text": "golden hour at Pigeon Point"}, ctx))
+    assert r.card["icon"] == "camera" and r.card["mood"] == "happy"

@@ -93,11 +93,22 @@ async def call(name: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         return ToolResult({"error": f"{name} failed unexpectedly."})
 
 
-def card(title: str, lines: list[str]) -> dict[str, Any]:
-    return {
+# Topic icons in the Stick's Tamagotchi-style icon bar.
+ICONS = ("mic", "weather", "fishing", "camera")
+
+
+def card(title: str, lines: list[str], *, icon: str | None = None, mood: str | None = None) -> dict[str, Any]:
+    """`icon` lights one of ICONS; mood="happy" makes Kai grin and blush while showing it."""
+    assert icon is None or icon in ICONS, icon
+    c: dict[str, Any] = {
         "title": title[:CARD_TITLE_CHARS],
         "lines": [line[:CARD_LINE_CHARS] for line in lines[:CARD_MAX_LINES]],
     }
+    if icon:
+        c["icon"] = icon
+    if mood:
+        c["mood"] = mood
+    return c
 
 
 def short_time(dt: datetime) -> str:
