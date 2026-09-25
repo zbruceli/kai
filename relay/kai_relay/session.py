@@ -1,7 +1,8 @@
 """Bridges one Stick WebSocket to one Gemini Live session.
 
 Device -> relay
-    text   {"type": "hello", "device": str, "battery": int, "fw": str}
+    text   {"type": "hello", "device": str, "battery": int, "fw": str, "sleep"?: {slept_s, mv_before, mv_after}}
+    text   {"type": "power", "mv", "usb", "mode", "bright", "wifi_ps", "rssi", ...}  every 30 s -> data/power.csv
     text   {"type": "ptt_start"}            button A pressed (also barges in on Kai speaking)
     binary PCM16 mono 16 kHz mic audio      only between ptt_start and ptt_end
     text   {"type": "ptt_end"}              button A released
@@ -30,6 +31,7 @@ from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
 
 from . import backstop, tools
+from .power import PowerLog, sleep_estimate_ma
 from .config import Settings
 from .persona import system_prompt
 
@@ -57,6 +59,7 @@ class KaiSession:
         self.ctx = ctx
         self.settings = settings
         self.device = "?"
+        self.power = PowerLog(settings.data_dir)
 
         self._live: Any = None  # google.genai AsyncSession
         self._stack: AsyncExitStack | None = None
@@ -114,6 +117,14 @@ class KaiSession:
             # No reply needed: the device shows idle itself, and a "state: idle" here would knock it out of
             # Thinking when it replays speech captured while waking from deep sleep.
             log.info("[%s] hello fw=%s battery=%s%%", self.device, m.get("fw"), m.get("battery"))
+            if isinstance(m.get("sleep"), dict):
+                sl = m["sleep"]
+                self.power.write(self.device, "sleep", **sl)
+                ma = sleep_estimate_ma(sl.get("slept_s", 0), sl.get("mv_before", 0), sl.get("mv_after", 0))
+                log.info("[%s] woke after %.1f h asleep, %s -> %s mV%s", self.device, sl.get("slept_s", 0) / 3600,
+                         sl.get("mv_before"), sl.get("mv_after"), f" (~{ma:.2f} mA)" if ma is not None else "")
+        elif kind == "power":
+            self.power.write(self.device, "report", **{k: v for k, v in m.items() if k != "type"})
         elif kind == "ptt_start":
             self._ptt = True
             self._utterance_id += 1

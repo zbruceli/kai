@@ -19,6 +19,7 @@ sim = ["sounddevice>=0.5"]
 [project.scripts]
 kai-relay = "kai_relay.server:main"
 kai-sim = "kai_relay.sim_device:main"
+kai-power = "kai_relay.power:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

@@ -155,3 +155,17 @@ def test_backstop_infers_tool_calls():
     assert infer_tool_call("When's golden hour at Pescadero tonight?", None) == (
         "get_sun_times", {"place": "Pescadero", "day": "tonight"})
     assert infer_tool_call("Who won the Giants game?", None) is None
+
+
+def test_power_estimates(tmp_path):
+    from kai_relay.power import PowerLog, Segment, mah_between, sleep_estimate_ma, soc
+
+    assert soc(4200) == 100 and soc(3000) == 0 and 45 < soc(3830) < 50
+    assert abs(mah_between(4200, 3270) - 250) < 1e-6
+    assert sleep_estimate_ma(600, 3900, 3890) is None                    # under an hour: too short
+    assert 0 < sleep_estimate_ma(8 * 3600, 3950, 3930) < 2               # 20 mV overnight ~ 1 mA
+    seg = Segment(("d", "idle", "90", "True"), [i * 60 for i in range(31)], [3950 - i for i in range(31)])
+    minutes, ma = seg.estimate()
+    assert minutes == 30 and 15 < ma < 25                                # 30 mV in 30 min near 3.93 V = ~19 mA
+    PowerLog(tmp_path).write("kai-1", "report", mode="idle", mv=3900, bogus=1)
+    assert (tmp_path / "power.csv").read_text().splitlines()[0].startswith("ts,device,kind,mode")

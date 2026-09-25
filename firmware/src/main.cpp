@@ -11,6 +11,7 @@
 #include <driver/rtc_io.h>
 #include <esp_heap_caps.h>
 #include <esp_sleep.h>
+#include <sys/time.h>
 
 #include "audio.h"
 #include "face.h"
@@ -29,6 +30,10 @@ static constexpr uint32_t DIM_AFTER_MS = 60000;
 static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 3 * 60000;  // on battery
 static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;  // on USB
 
+// Power telemetry: battery voltage and state are reported to the relay (relay/data/power.csv) so
+// consumption per state can be measured from the voltage slope; see docs/POWER.md.
+static constexpr uint32_t POWER_REPORT_MS = 30000;
+
 // Buttons (active low), both RTC-capable so they can wake the chip from deep sleep.
 static constexpr gpio_num_t PIN_BTN_A = GPIO_NUM_11;
 static constexpr gpio_num_t PIN_BTN_B = GPIO_NUM_12;
@@ -42,6 +47,8 @@ static constexpr size_t EARLY_TALK_BYTES = audio::MIC_RATE * 2 * EARLY_TALK_MAX_
 RTC_DATA_ATTR static uint8_t cachedBssid[6];
 RTC_DATA_ATTR static int32_t cachedChannel = 0;
 RTC_DATA_ATTR static uint32_t cachedRelayIp = 0;
+RTC_DATA_ATTR static int64_t sleptAtUs = 0;  // RTC wall clock keeps running through deep sleep
+RTC_DATA_ATTR static int16_t sleptMv = 0;
 
 enum class Mode { Offline, Idle, Listening, Thinking, Reply };
 
@@ -67,6 +74,11 @@ static uint32_t lastInteraction = 0;
 static uint32_t lastBatteryRead = 0;
 static bool dimmed = false;
 static bool screenOff = false;
+static uint8_t brightness = 0;
+static int16_t wakeMv = 0;  // battery voltage at boot, before Wi-Fi loads it
+static uint32_t lastPowerReport = 0;
+static uint32_t loopCount = 0;
+static uint32_t renderBusyUs = 0;
 
 static bool earlyTalk = false;       // capturing speech before the relay is connected
 static bool earlyTalkEnded = false;  // ...and the button was already released
@@ -93,6 +105,17 @@ static void setMode(Mode m) {
   WiFi.setSleep(m == Mode::Idle || m == Mode::Offline);
 }
 
+static void backlight(uint8_t level) {
+  brightness = level;
+  M5.Display.setBrightness(level);
+}
+
+static int64_t rtcNowUs() {
+  timeval tv;
+  gettimeofday(&tv, nullptr);
+  return int64_t(tv.tv_sec) * 1000000 + tv.tv_usec;
+}
+
 static void wake() {
   lastInteraction = millis();
   if (screenOff) {
@@ -100,7 +123,7 @@ static void wake() {
     screenOff = false;
   }
   if (dimmed) {
-    M5.Display.setBrightness(BRIGHTNESS_AWAKE);
+    backlight(BRIGHTNESS_AWAKE);
     dimmed = false;
     if (mode == Mode::Idle) face::setExpr(Expr::Idle);
   }
@@ -109,10 +132,12 @@ static void wake() {
 [[noreturn]] static void goToDeepSleep() {
   log_i("deep sleep");
   if (wsConnected) ws.disconnect();
+  sleptMv = M5.Power.getBatteryVoltage();
+  sleptAtUs = rtcNowUs();
   audio::clearPlayback();
   M5.Speaker.end();
   M5.Mic.end();
-  M5.Display.setBrightness(0);
+  backlight(0);
   M5.Display.sleep();
   M5.Display.waitDisplay();
   WiFi.disconnect(true);
@@ -136,17 +161,20 @@ static void wake() {
 }
 
 static void powerSave(uint32_t now) {
+#ifdef KAI_POWER_TEST
+  return;  // hold the current state for a measurement run (env:sticks3_powertest)
+#endif
   if (mode != Mode::Idle && mode != Mode::Offline) return;
   if (earlyTalk) return;
   const uint32_t idle = now - lastInteraction;
   if (!dimmed && idle > DIM_AFTER_MS) {
-    M5.Display.setBrightness(BRIGHTNESS_DIM);
+    backlight(BRIGHTNESS_DIM);
     if (mode == Mode::Idle) face::setExpr(Expr::Sleeping);
     dimmed = true;
   }
   if (audio::onUsbPower()) {
     if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
-      M5.Display.setBrightness(0);
+      backlight(0);
       M5.Display.sleep();
       screenOff = true;
     }
@@ -184,6 +212,38 @@ static void sendMic(const int16_t* samples, size_t count) {
 }
 
 static void discardMic(const int16_t*, size_t) {}
+
+static const char* modeName(Mode m) {
+  switch (m) {
+    case Mode::Offline: return "offline";
+    case Mode::Idle: return dimmed ? "idle_dim" : "idle";
+    case Mode::Listening: return "listening";
+    case Mode::Thinking: return "thinking";
+    case Mode::Reply: return audio::playbackIdle() ? "reply" : "speaking";
+  }
+  return "?";
+}
+
+static void sendPowerReport(uint32_t now) {
+  const uint32_t span = now - lastPowerReport;
+  JsonDocument doc;
+  doc["type"] = "power";
+  doc["mv"] = M5.Power.getBatteryVoltage();
+  doc["usb"] = audio::onUsbPower();
+  doc["mode"] = modeName(mode);
+  doc["bright"] = screenOff ? 0 : brightness;
+  doc["wifi_ps"] = WiFi.getSleep();
+  doc["rssi"] = WiFi.RSSI();
+  doc["up_s"] = now / 1000;
+  doc["loop_hz"] = span ? loopCount * 1000 / span : 0;
+  doc["render_pct"] = span ? renderBusyUs / 10 / span : 0;  // % of time spent drawing
+  String out;
+  serializeJson(doc, out);
+  ws.sendTXT(out);
+  lastPowerReport = now;
+  loopCount = 0;
+  renderBusyUs = 0;
+}
 
 // Anything Kai sends back (speech, words, a card) lands on the reply screen, whatever we were showing.
 static void replyActivity() {
@@ -282,6 +342,12 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
+      if (wokeFromSleep && sleptAtUs && !everConnected) {  // one deep-sleep measurement per wake
+        JsonObject sleep = hello["sleep"].to<JsonObject>();
+        sleep["slept_s"] = (rtcNowUs() - sleptAtUs) / 1000000;
+        sleep["mv_before"] = sleptMv;
+        sleep["mv_after"] = wakeMv;
+      }
       String out;
       serializeJson(hello, out);
       ws.sendTXT(out);
@@ -470,6 +536,7 @@ void setup() {
   M5.begin(cfg);
   Serial.begin(115200);
 
+  wakeMv = M5.Power.getBatteryVoltage();
   bool wokeToTalk = false;
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
     wokeFromSleep = true;
@@ -478,7 +545,7 @@ void setup() {
 
   startWifi();
   face::begin();
-  M5.Display.setBrightness(BRIGHTNESS_AWAKE);
+  backlight(BRIGHTNESS_AWAKE);
   if (!audio::begin()) log_e("PSRAM allocation failed: check board_build.arduino.memory_type");
   face::setBattery(M5.Power.getBatteryLevel());
   lastInteraction = millis();
@@ -547,5 +614,11 @@ void loop() {
     if (mode != Mode::Listening) audio::updateVolume();  // follows USB plug/unplug
   }
   powerSave(now);
-  if (!screenOff) face::render();
+  loopCount++;
+  if (!screenOff) {
+    const uint32_t t0 = micros();
+    face::render();
+    renderBusyUs += micros() - t0;
+  }
+  if (wsConnected && now - lastPowerReport >= POWER_REPORT_MS) sendPowerReport(now);
 }
