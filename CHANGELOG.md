@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The sleeping z's are drawn as proper Z shapes (they read as "I").
+- README: animated hero of Kai's moods and a gallery of reply screens.
+
 ## v0.8.1
 
 - On USB power the screen now turns off after 45 s idle (was 4 minutes), matching battery timing. The Stick

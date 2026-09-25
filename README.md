@@ -1,5 +1,9 @@
 # Kai
 
+<p align="center">
+  <img src="docs/images/kai-moods.gif" width="480" alt="Kai's moods on the 240x135 screen: idle, listening, thinking, speaking, happy, sleeping, offline">
+</p>
+
 A pocket AI pal on an **M5StickS3**: hold the button, ask, and Kai answers out loud with a face and
 little info cards. The Stick stays thin — it streams audio over home Wi-Fi to a **relay on a home server** (Raspberry Pi or any Linux box),
 which runs a **Gemini Live** voice session with Google Search plus Kai's own tools.
@@ -13,6 +17,16 @@ M5StickS3 ──── WebSocket (LAN) ────▶ home server: kai-relay  �
                                        ├─ sun/light  → Open-Meteo + astral (golden/blue hour)
                                        └─ parking    → Google Places API (New)
 ```
+
+## Screens
+
+Every answer is spoken and shown: the tool's card, then a live transcript you can scroll.
+
+| Weather, mid-answer | Tides | Saved note |
+|:---:|:---:|:---:|
+| <img src="docs/images/reply_weather.png" width="260" alt="Weather card for Half Moon Bay with Kai's spoken answer"> | <img src="docs/images/reply_tides.png" width="260" alt="Tomorrow's tide times from NOAA Pillar Point Harbor"> | <img src="docs/images/reply_note.png" width="260" alt="Kai grinning after saving a trip note"> |
+
+<sub>Rendered from the firmware's sprite and layout code (`firmware/src/face.cpp`) at 3x; fonts are approximate.</sub>
 
 ## What you can ask
 
