@@ -20,6 +20,10 @@ void stopMic(MicSink sink);  // flushes the tail, then switches back to the spea
 // Speaker side: queue PCM16 from the relay; pollSpeaker() keeps the speaker fed.
 void enqueue(const uint8_t* pcm, size_t bytes);
 void pollSpeaker(bool turnComplete);
+// Power: the amp and codec are only on while Kai speaks or listens. powerDown() turns everything off
+// (after a reply, and before deep sleep); enqueue() and startMic() bring it back as needed.
+void speakerOn();
+void powerDown();
 void clearPlayback();
 bool playbackIdle();
 

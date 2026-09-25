@@ -17,17 +17,22 @@
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.7.0";
+static constexpr const char* FW_VERSION = "0.8.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
-static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
+static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;    // reply screen returns to the face after this idle time
 
-// Power: on this LCD the backlight costs battery (pixel colour doesn't), and the Wi-Fi radio costs even
-// more. On battery Kai dims, then deep-sleeps; on USB it only turns the screen off so it stays instant.
+// Power (see docs/POWER.md): most of each question's energy used to go to the idle tail after the
+// answer, so the tail is short, the radio naps and the CPU slows down whenever nothing is happening,
+// and deep sleep powers the screen/audio rail off. On USB Kai never deep-sleeps, so it stays instant.
 static constexpr uint8_t BRIGHTNESS_AWAKE = 90;
 static constexpr uint8_t BRIGHTNESS_DIM = 15;
-static constexpr uint32_t DIM_AFTER_MS = 60000;
-static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 3 * 60000;  // on battery
+static constexpr uint32_t DIM_AFTER_MS = 15000;
+static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 45000;      // on battery
+static constexpr uint32_t CPU_MHZ_BUSY = 240;               // listening, thinking, speaking
+static constexpr uint32_t CPU_MHZ_IDLE = 80;                // lowest speed Wi-Fi allows
+// M5PM1 (I2C 0x6E): GPIO2 switches the L3B rail (LCD, backlight, mic, codec, amp).
+static constexpr uint8_t PM1_ADDR = 0x6E, PM1_GPIO_OUT = 0x11, PM1_L3B_BIT = 1 << 2;
 static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;  // on USB
 
 // Power telemetry: battery voltage and state are reported to the relay (relay/data/power.csv) so
@@ -79,6 +84,7 @@ static int16_t wakeMv = 0;  // battery voltage at boot, before Wi-Fi loads it
 static uint32_t lastPowerReport = 0;
 static uint32_t loopCount = 0;
 static uint32_t renderBusyUs = 0;
+static bool busy = true;  // radio awake + fast CPU
 
 static bool earlyTalk = false;       // capturing speech before the relay is connected
 static bool earlyTalkEnded = false;  // ...and the button was already released
@@ -87,6 +93,16 @@ static uint8_t* earlyBuf = nullptr;
 static size_t earlyLen = 0;
 
 // ---------------------------------------------------------------------------
+
+// Busy: radio fully awake and CPU at full speed, for streaming audio. Otherwise the radio sleeps between
+// access-point beacons (replies arrive a few hundred ms later, which only matters mid-conversation)
+// and the CPU drops to 80 MHz.
+static void setBusy(bool b) {
+  if (b == busy) return;
+  busy = b;
+  setCpuFrequencyMhz(b ? CPU_MHZ_BUSY : CPU_MHZ_IDLE);
+  WiFi.setSleep(b ? WIFI_PS_NONE : WIFI_PS_MAX_MODEM);
+}
 
 static void setMode(Mode m) {
   mode = m;
@@ -101,8 +117,8 @@ static void setMode(Mode m) {
     case Mode::Reply:     lastReplyActivity = millis(); break;
   }
   face::showReply(m == Mode::Reply);
-  // Modem sleep saves battery but adds latency; only allow it while nothing is streaming.
-  WiFi.setSleep(m == Mode::Idle || m == Mode::Offline);
+  // A reply screen reopened after the answer finished (or the status card) needs no radio.
+  setBusy(m == Mode::Listening || m == Mode::Thinking || (m == Mode::Reply && !turnComplete));
 }
 
 static void backlight(uint8_t level) {
@@ -134,12 +150,13 @@ static void wake() {
   if (wsConnected) ws.disconnect();
   sleptMv = M5.Power.getBatteryVoltage();
   sleptAtUs = rtcNowUs();
-  audio::clearPlayback();
-  M5.Speaker.end();
-  M5.Mic.end();
+  audio::powerDown();
+  M5.Imu.sleep();
   backlight(0);
   M5.Display.sleep();
   M5.Display.waitDisplay();
+  // LCD, backlight, codec and amp unpowered while asleep; M5GFX switches the rail back on at boot.
+  M5.In_I2C.bitOff(PM1_ADDR, PM1_GPIO_OUT, PM1_L3B_BIT, 100000);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
@@ -153,6 +170,9 @@ static void wake() {
   esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
 #endif
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keeps the pull-ups alive
+#ifdef KAI_SLEEP_TEST
+  esp_sleep_enable_timer_wakeup(10 * 1000000ULL);
+#endif
   for (gpio_num_t pin : {PIN_BTN_A, PIN_BTN_B}) {
     rtc_gpio_pullup_en(pin);
     rtc_gpio_pulldown_dis(pin);
@@ -172,6 +192,9 @@ static void powerSave(uint32_t now) {
     if (mode == Mode::Idle) face::setExpr(Expr::Sleeping);
     dimmed = true;
   }
+#ifdef KAI_SLEEP_TEST  // exercise the sleep/wake path on USB: sleeps after 20 s, wakes on a 10 s timer
+  if (idle > 20000) goToDeepSleep();
+#endif
   if (audio::onUsbPower()) {
     if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
       backlight(0);
@@ -237,6 +260,7 @@ static void sendPowerReport(uint32_t now) {
   doc["up_s"] = now / 1000;
   doc["loop_hz"] = span ? loopCount * 1000 / span : 0;
   doc["render_pct"] = span ? renderBusyUs / 10 / span : 0;  // % of time spent drawing
+  doc["mhz"] = getCpuFrequencyMhz();
   String out;
   serializeJson(doc, out);
   ws.sendTXT(out);
@@ -375,6 +399,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       // Speech is played whenever it arrives, even after a card or a turn_complete: Gemini can finish a
       // tool-call turn first and speak the answer in the next one.
       if (hushed || mode == Mode::Listening || mode == Mode::Offline) break;
+      setBusy(true);
       audio::enqueue(payload, length);
       turnComplete = false;
       replyActivity();
@@ -423,7 +448,7 @@ static void startRelayConnection() {
   ws.setExtraHeaders("Authorization: Bearer " KAI_DEVICE_TOKEN);
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(wokeFromSleep ? 1000 : 3000);
-  ws.enableHeartbeat(15000, 3000, 2);
+  ws.enableHeartbeat(30000, 5000, 2);  // the relay pings every 20 s too; no need to wake the radio more
   wsStarted = true;
   wsBeganAt = millis();
   connectedSinceBegin = false;
@@ -536,6 +561,9 @@ void setup() {
   M5.begin(cfg);
   Serial.begin(115200);
 
+  M5.Power.setExtOutput(false);  // 5V boost for Grove/Hat/IR: unused, and it was left running
+  M5.Imu.sleep();                // not used yet
+
   wakeMv = M5.Power.getBatteryVoltage();
   bool wokeToTalk = false;
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
@@ -598,6 +626,8 @@ void loop() {
       } else if (wasSpeaking && turnComplete) {
         face::replyFinished();  // only at the real end, not a mid-answer buffer gap
         wasSpeaking = false;
+        audio::powerDown();     // amp and codec off until the next answer
+        setBusy(false);
       }
       if (!speaking && now - lastReplyActivity > REPLY_TIMEOUT_MS) setMode(Mode::Idle);
       break;
@@ -621,4 +651,8 @@ void loop() {
     renderBusyUs += micros() - t0;
   }
   if (wsConnected && now - lastPowerReport >= POWER_REPORT_MS) sendPowerReport(now);
+
+  // Let FreeRTOS idle the CPU instead of spinning. Listening already blocks in the mic read; the
+  // speaker has 150 ms of queued audio, so a few ms here never starves it.
+  if (mode != Mode::Listening) delay(busy ? 2 : 10);
 }

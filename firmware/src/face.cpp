@@ -6,8 +6,8 @@ namespace face {
 namespace {
 
 constexpr int W = 240, H = 135;
-constexpr uint32_t FRAME_MS = 33;
-constexpr uint32_t TICK_MS = 250;  // sprite animation step
+constexpr uint32_t TICK_MS = 250;     // sprite animation step; also the frame interval when nothing moves
+constexpr uint32_t ANIM_FRAME_MS = 50;  // while the mouth or sound waves follow the audio
 
 // ---- theme: pastel -----------------------------------------------------------
 
@@ -103,6 +103,8 @@ int top = 0;
 bool userScrolled = false;
 
 uint32_t lastFrame = 0, nextBlink = 0, blinkUntil = 0, lastTick = 0;
+bool dirty = true;        // something changed since the last frame
+bool shownBlink = false;  // eyes were closed in the last frame
 int walk = 0, walkDir = 1;
 
 // ---- drawing helpers -----------------------------------------------------------
@@ -392,10 +394,19 @@ void begin() {
 #endif
 }
 
-void setExpr(Expr e) { expr = e; }
+void setExpr(Expr e) {
+  dirty |= e != expr;
+  expr = e;
+}
 void setLevel(float l) { level = l; }
-void setStatusText(const String& text) { statusText = text; }
-void setBattery(int percent) { battery = percent; }
+void setStatusText(const String& text) {
+  dirty |= text != statusText;
+  statusText = text;
+}
+void setBattery(int percent) {
+  dirty |= percent != battery;
+  battery = percent;
+}
 
 void clearReply() {
   replyHasCard = false;
@@ -405,47 +416,65 @@ void clearReply() {
   top = 0;
   userScrolled = false;
   speaking = false;
+  dirty = true;
 }
 
 void setReplyCard(const Card& card) {
   replyCard = card;
   replyHasCard = true;
-  linesDirty = true;
+  linesDirty = dirty = true;
 }
 
 void appendReplyText(const String& text) {
   replyText += text;
-  linesDirty = true;
+  linesDirty = dirty = true;
 }
 
 bool hasReply() { return replyHasCard || replyText.length() > 0; }
-void showReply(bool on) { replyOn = on; }
+void showReply(bool on) {
+  dirty |= on != replyOn;
+  replyOn = on;
+}
 bool replyVisible() { return replyOn; }
-void setSpeaking(bool s) { speaking = s; }
+void setSpeaking(bool s) {
+  dirty |= s != speaking;
+  speaking = s;
+}
 
 void scrollReply() {
   if (linesDirty) rebuildLines();
   userScrolled = true;
   top = (top >= maxTop()) ? 0 : min(top + VISIBLE_LINES - 1, maxTop());
+  dirty = true;
 }
 
 void replyFinished() {
   speaking = false;
   if (!userScrolled) top = 0;
+  dirty = true;
 }
 
 void render() {
+  // Power: draw only when something changed, a blink starts or ends, or the animation needs a new
+  // frame (20 fps while following audio, 4 fps otherwise). A full frame costs ~15 ms of CPU and SPI.
   uint32_t now = millis();
-  if (now - lastFrame < FRAME_MS) return;
+  bool blinkEdge = false;
+  if (now >= nextBlink) {
+    blinkUntil = now + 150;
+    nextBlink = now + 2500 + esp_random() % 3500;
+    blinkEdge = true;
+  }
+  blinkEdge |= (now < blinkUntil) != shownBlink;
+  const bool animating = replyOn ? speaking : expr == Expr::Listening;
+  const uint32_t interval = animating ? ANIM_FRAME_MS : TICK_MS;
+  if (!dirty && !blinkEdge && now - lastFrame < interval) return;
   lastFrame = now;
+  dirty = false;
+  shownBlink = now < blinkUntil;
 
   const uint32_t tick = now / TICK_MS;
   const bool newTick = tick != lastTick;
   lastTick = tick;
-  if (now >= nextBlink) {
-    blinkUntil = now + 150;
-    nextBlink = now + 2500 + esp_random() % 3500;
-  }
   shownLevel += (level - shownLevel) * 0.5f;
 
   canvas.fillSprite(T.bg);

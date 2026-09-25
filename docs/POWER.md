@@ -1,4 +1,4 @@
-# Kai power budget (firmware 0.7)
+# Kai power budget
 
 The battery is 250 mAh; about **225 mAh** is usable down to the power chip's cutoff. The PMIC (M5PM1)
 reports battery voltage but not current, so the per-state numbers below are **estimates** built from
@@ -62,13 +62,38 @@ tail until deep sleep):
 - 20 questions: 132 mAh + 22.5 h of deep sleep at 2 mA (45 mAh) = 177 mAh/day, so **~1.3 days per charge**.
 - 10 questions: ~113 mAh/day, so **~2 days per charge**.
 
-## Biggest levers (to confirm by measurement)
+## Firmware 0.8: power savings
 
-1. **The idle tail:** Wi-Fi stays fully awake for a minute after each reply, then the Stick idles for
-   3 minutes before deep sleep.
-2. **CPU and redraw:** 30 fps full-frame redraws in a loop that never sleeps.
-3. **Deep-sleep leakage:** L3B (LCD, codec) and the IMU stay powered, costing ~20× M5's L2 figure.
-4. **Speech volume:** the amp is the largest single load while speaking.
+The 0.7 budget above showed the idle tail and a CPU that never rested as the main drains. 0.8 targets
+them:
+
+| Change | Why |
+|---|---|
+| Redraw only on change: 20 fps while audio animates, 4 fps otherwise (was 30 fps always) | drawing time 50% → 8% (measured) |
+| `delay()` in the loop so FreeRTOS idles the CPU | loop rate 294/s → 75/s (measured) |
+| 80 MHz CPU unless listening, thinking or speaking | about -15 mA idle |
+| Wi-Fi `MAX_MODEM` power save whenever no audio is streaming, including the reply screen after speech | the radio naps between beacons |
+| Amp **and** ES8311 codec off except while speaking or listening (M5Unified left the DAC running) | -4 to 5 mA idle |
+| 5V boost off at boot (M5Unified left it running) and IMU asleep | ~-1 to 2 mA always |
+| Deep sleep cuts the L3B rail (LCD, backlight, codec, amp), verified by reading PM1 back | ~2 mA → ~0.15 mA |
+| Timers: reply screen 60 → 20 s, dim 60 → 15 s, deep sleep 3 min → 45 s | shorter tail |
+
+**Projected, until measured:**
+
+| State | 0.7 | 0.8 |
+|---|---|---|
+| Idle face | ~67 mA | ~28 mA |
+| Reply screen after the answer | ~137 mA | ~28 mA |
+| Deep sleep | ~2 mA | ~0.15 mA |
+| Energy per question | 6.6 mAh | **~1.6 mAh** (talking is now 64% of it) |
+| 20 questions a day | ~1.3 days | **~6 days** |
+| 10 questions a day | ~2 days | **~11 days** |
+| Idle face, nonstop | 3.4 h | ~8 h |
+
+**Remaining levers:**
+- **Speech volume:** the amp is now the largest share of each question.
+- **Faster wakes:** a static IP would skip DHCP.
+- **Near-zero sleep:** a PM1 power-off with IMU motion wake would draw 14–52 µA and give "pick it up to wake".
 
 ## Measuring it
 

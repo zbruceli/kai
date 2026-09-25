@@ -19,7 +19,7 @@ from pathlib import Path
 
 CAPACITY_MAH = 250
 FIELDS = ["ts", "device", "kind", "mode", "mv", "usb", "bright", "wifi_ps", "rssi", "up_s", "loop_hz",
-          "render_pct", "slept_s", "mv_before", "mv_after"]
+          "render_pct", "slept_s", "mv_before", "mv_after", "mhz"]
 
 # Typical 1-cell LiPo open-circuit voltage (mV) -> state of charge (%), light load.
 OCV = [(3270, 0), (3610, 5), (3690, 10), (3710, 15), (3730, 20), (3750, 25), (3770, 30), (3790, 35),
@@ -44,6 +44,12 @@ class PowerLog:
     def __init__(self, data_dir: Path):
         self.path = data_dir / "power.csv"
         data_dir.mkdir(parents=True, exist_ok=True)
+        # Columns changed since this file was started: keep the old one aside rather than misalign rows.
+        if self.path.exists():
+            with self.path.open() as f:
+                header = f.readline().strip().split(",")
+            if header != FIELDS:
+                self.path.rename(self.path.with_name(f"power-{int(self.path.stat().st_mtime)}.csv"))
 
     def write(self, device: str, kind: str, **values) -> None:
         new = not self.path.exists()

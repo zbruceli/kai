@@ -24,6 +24,8 @@ bool playing = false;
 
 float lastLevel = 0;
 
+constexpr uint8_t ES8311_ADDR = 0x18;
+
 // ---- loudness: Gemini's voice is fairly quiet for a 1 W speaker, so boost it digitally, but scale the
 // boost per chunk so peaks never clip. Hardware volume is maxed on USB; on battery M5 advises staying
 // under ~75% because loud peaks can brown out the small cell.
@@ -66,12 +68,35 @@ size_t ringRead(uint8_t* dst, size_t n) {
 
 }  // namespace
 
+// M5Unified's speaker end() only switches the amp off and leaves the ES8311 DAC running, so power the
+// codec down ourselves (the same sequence M5Unified uses when the mic stops). Both begin() calls
+// reinitialise it.
+void codecPowerDown() {
+  M5.In_I2C.writeRegister8(ES8311_ADDR, 0x0D, 0xFC, 100000);  // analog circuitry off
+  M5.In_I2C.writeRegister8(ES8311_ADDR, 0x0E, 0x6A, 100000);
+  M5.In_I2C.writeRegister8(ES8311_ADDR, 0x00, 0x00, 100000);  // CSM power down
+}
+
 bool begin() {
   ring = static_cast<uint8_t*>(heap_caps_malloc(RING_BYTES, MALLOC_CAP_SPIRAM));
   M5.Mic.end();
-  M5.Speaker.begin();
+  M5.Speaker.end();
+  codecPowerDown();  // nothing plays until Kai has something to say
   updateVolume();
   return ring != nullptr;
+}
+
+void speakerOn() {
+  if (M5.Speaker.isRunning()) return;
+  M5.Speaker.begin();
+  updateVolume();
+}
+
+void powerDown() {
+  clearPlayback();
+  if (M5.Speaker.isRunning()) M5.Speaker.end();
+  if (M5.Mic.isRunning()) M5.Mic.end();
+  codecPowerDown();
 }
 
 void startMic() {
@@ -98,14 +123,13 @@ void stopMic(MicSink sink) {
   // Up to two recorded buffers haven't been sent yet: recIdx-2 then recIdx-1.
   if (queued >= 2) sink(micBuf[(recIdx + 1) % 3], MIC_CHUNK);
   if (queued >= 1) sink(micBuf[(recIdx + 2) % 3], MIC_CHUNK);
-  M5.Mic.end();
-  M5.Speaker.begin();
-  updateVolume();
+  M5.Mic.end();  // also powers the codec down; the speaker starts when a reply arrives
   lastLevel = 0;
 }
 
 void enqueue(const uint8_t* pcm, size_t bytes) {
   if (!ring) return;
+  speakerOn();
   if (bytes > RING_BYTES - ringCount) {
     log_w("speaker ring full, dropping %u bytes", bytes);
     bytes = RING_BYTES - ringCount;
@@ -139,13 +163,13 @@ void pollSpeaker(bool turnComplete) {
 }
 
 void clearPlayback() {
-  M5.Speaker.stop();
+  if (M5.Speaker.isRunning()) M5.Speaker.stop();
   ringHead = ringTail = ringCount = 0;
   playing = false;
   lastLevel = 0;
 }
 
-bool playbackIdle() { return ringCount < 2 && !M5.Speaker.isPlaying(); }
+bool playbackIdle() { return ringCount < 2 && (!M5.Speaker.isRunning() || !M5.Speaker.isPlaying()); }
 
 float level() { return lastLevel; }
 
