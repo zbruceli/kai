@@ -1,11 +1,11 @@
 # Kai
 
 A pocket AI pal on an **M5StickS3**: hold the button, ask, and Kai answers out loud with a face and
-little info cards. The Stick stays thin — it streams audio over home Wi-Fi to a **relay on a Raspberry Pi**,
+little info cards. The Stick stays thin — it streams audio over home Wi-Fi to a **relay on a home server** (Raspberry Pi or any Linux box),
 which runs a **Gemini Live** voice session with Google Search plus Kai's own tools.
 
 ```
-M5StickS3 ──── WebSocket (LAN) ────▶ Raspberry Pi: kai-relay ──▶ Gemini Live (gemini-3.8-live)
+M5StickS3 ──── WebSocket (LAN) ────▶ home server: kai-relay  ──▶ Gemini Live (gemini-3.8-live)
  mic 16 kHz PCM  ─────────────────▶   ├─ google_search grounding
  speaker 24 kHz  ◀─────────────────   ├─ notes      → SQLite + Markdown per trip
  face + cards    ◀── JSON ──────────   ├─ tides      → NOAA CO-OPS (nearest station)
@@ -50,18 +50,31 @@ looks. Build with `-DKAI_LIGHT_THEME` for the cream variant.
 
 ## Setup
 
-### 1. Relay on the Raspberry Pi
+### 1. Relay on a home server
+
+Any always-on Linux box on your LAN works: a Raspberry Pi, a mini PC, a NAS. No sudo needed.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh      # once
 git clone https://github.com/zbruceli/kai ~/kai && cd ~/kai/relay
-cp .env.example .env && nano .env                     # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
-uv sync
-uv run kai-relay                                      # prints ws://<pi-ip>:8765/ws
+cp .env.example .env && chmod 600 .env && nano .env   # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
+uv sync --frozen
+uv run kai-relay                                      # try it; prints ws://<server-ip>:8765/ws
 ```
 
-Run it at boot with `deploy/kai-relay.service` (instructions inside the file). Give the Pi a DHCP
-reservation in your router so its address never changes.
+Run it at boot as a user service (edit `TZ=` in the file first if you're not on Pacific time; many servers
+run in UTC, and "today"/"tomorrow" follow it):
+
+```bash
+mkdir -p ~/.config/systemd/user && cp deploy/kai-relay.service ~/.config/systemd/user/
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload && systemctl --user enable --now kai-relay
+journalctl --user -u kai-relay -f                     # live transcript and tool calls
+```
+
+To update later: `cd ~/kai && git pull && cd relay && uv sync --frozen && systemctl --user restart kai-relay`.
+
+Give the server a DHCP reservation in your router so its IP never changes; the Stick connects to it.
 
 Keys: Gemini from [AI Studio](https://aistudio.google.com/apikey). Parking needs a Maps key with
 **Places API (New)** enabled; without it everything else still works.
@@ -72,7 +85,7 @@ From the Mac, with its mic and speakers:
 
 ```bash
 cd relay && uv sync --extra sim
-uv run kai-sim --host raspberrypi.local --token <KAI_DEVICE_TOKEN>
+uv run kai-sim --host <server-ip> --token <KAI_DEVICE_TOKEN>
 ```
 
 ### 3. Flash the Stick
@@ -115,7 +128,7 @@ relay/
   kai_relay/backstop.py  runs the right tool itself when Gemini answers a tide/weather/light/parking
                          question without one, so a card always appears
   kai_relay/tools/       one file per capability; add a tool with the @tool decorator
-  deploy/                systemd unit for the Pi
+  deploy/                user-level systemd unit for the home server
 ```
 
 ## Roadmap

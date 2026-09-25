@@ -1,19 +1,21 @@
-# Raspberry Pi: runs the relay at boot as the 'pi' user.
-#   sudo cp deploy/kai-relay.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now kai-relay
-#   journalctl -u kai-relay -f          # live transcript + tool calls
+# User-level systemd service: runs the relay at boot as your own user, no sudo needed.
+#   mkdir -p ~/.config/systemd/user && cp deploy/kai-relay.service ~/.config/systemd/user/
+#   loginctl enable-linger "$USER"        # start at boot, without logging in
+#   systemctl --user daemon-reload && systemctl --user enable --now kai-relay
+#   journalctl --user -u kai-relay -f     # live transcript + tool calls
+# Assumes the repo is at ~/kai and uv at ~/.local/bin/uv.
 [Unit]
 Description=Kai relay (M5StickS3 <-> Gemini Live)
 After=network-online.target
-Wants=network-online.target
 
 [Service]
-User=pi
-WorkingDirectory=/home/pi/kai/relay
-ExecStart=/home/pi/.local/bin/uv run --frozen kai-relay
+WorkingDirectory=%h/kai/relay
+ExecStart=%h/.local/bin/uv run --frozen kai-relay
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# "Today"/"tomorrow" and tide times use local time; servers often run in UTC. Set your zone here.
+Environment=TZ=America/Los_Angeles
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
