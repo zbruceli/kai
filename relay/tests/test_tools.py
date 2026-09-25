@@ -94,3 +94,15 @@ def test_screen_text_is_ascii():
     from kai_relay.session import screen_text
 
     assert screen_text("It’s 68°F at Año Nuevo — nice…") == "It's 68F at Ano Nuevo - nice..."
+
+
+def test_geocode_prefers_places_near_home():
+    from kai_relay.tools.geo import _pick
+
+    results = [
+        {"name": "San Mateo", "admin1": "Calabarzon", "country": "Philippines", "country_code": "PH", "latitude": 14.70, "longitude": 121.12},
+        {"name": "San Mateo", "admin1": "California", "country": "United States", "country_code": "US", "latitude": 37.56, "longitude": -122.33},
+    ]
+    assert _pick(results, 37.46, -122.43, "San Mateo")["lat"] == 37.56          # near home wins
+    assert _pick(results, 37.46, -122.43, "San Mateo, Philippines")["lat"] == 14.70  # explicit region wins
+    assert _pick(results, None, None, "San Mateo")["lat"] == 14.70              # no home: top hit

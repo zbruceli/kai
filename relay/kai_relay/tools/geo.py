@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from .registry import ToolContext, ToolError
 
 HERE_WORDS = {"here", "home", "near me", "nearby", "current location", "my location", "around here"}
+# A bare name like "San Mateo" means the one near home, not the most populous one (Philippines).
+LOCAL_KM = 300
 
 
 @dataclass
@@ -39,13 +41,33 @@ async def resolve(ctx: ToolContext, place: str | None) -> Place:
             p = found[0]
             return Place(p["displayName"]["text"], p["location"]["latitude"], p["location"]["longitude"])
 
-    r = await ctx.http.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": place, "count": 1})
+    # Open-Meteo matches on the bare name only, so strip ", CA" style qualifiers and rank by distance instead.
+    name = place.split(",")[0].strip()
+    r = await ctx.http.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": name, "count": 10})
     r.raise_for_status()
     results = r.json().get("results") or []
     if not results:
         raise ToolError(f"I couldn't find a place called {place}.")
-    g = results[0]
-    return Place(g["name"], g["latitude"], g["longitude"])
+    return Place(**_pick(results, s.home_lat, s.home_lon, place))
+
+
+def _pick(results: list[dict], home_lat: float | None, home_lon: float | None, query: str) -> dict:
+    """A region/country the user named ("San Mateo, Philippines"); else the nearest within LOCAL_KM of home; else the top hit."""
+    def as_place(g: dict) -> dict:
+        return {"name": g["name"], "lat": g["latitude"], "lon": g["longitude"]}
+
+    qualifier = query.split(",", 1)[1].strip().lower() if "," in query else ""
+    if qualifier:
+        for g in results:
+            regions = {str(g.get(k, "")).lower() for k in ("admin1", "country", "country_code")}
+            if qualifier in regions or any(qualifier and qualifier in r for r in regions if len(qualifier) > 2):
+                return as_place(g)
+    if home_lat is not None and home_lon is not None:
+        near = [(distance_km(home_lat, home_lon, g["latitude"], g["longitude"]), g) for g in results]
+        dist, best = min(near, key=lambda t: t[0])
+        if dist <= LOCAL_KM:
+            return as_place(best)
+    return as_place(results[0])
 
 
 def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

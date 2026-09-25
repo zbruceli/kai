@@ -95,11 +95,11 @@ def _day_index(daily_times: list[str], day: str | None, tz: ZoneInfo) -> int:
 @tool(
     "get_weather",
     "Weather for a place: current temperature and sky, today's high/low, rain chance, wind and gusts, "
-    "and on the coast wave height, swell and water temperature (for fishing). Hourly for the next 12 hours, "
-    "or for a given day.",
+    "and on the coast wave height, swell and water temperature (for fishing), plus a 3-day outlook. "
+    "Call it for every weather question, including repeats and follow-ups: it refreshes the card on screen.",
     {
         "place": {"type": "STRING", "description": "Spot, beach, lake or town. Omit for home."},
-        "date": {"type": "STRING", "description": "Day YYYY-MM-DD (up to 3 days ahead). Omit for the next 12 hours."},
+        "date": {"type": "STRING", "description": "A future day YYYY-MM-DD (up to 3 days ahead). Omit for today/now."},
     },
 )
 async def get_weather(ctx: ToolContext, place: str | None = None, date: str | None = None) -> ToolResult:
@@ -107,6 +107,8 @@ async def get_weather(ctx: ToolContext, place: str | None = None, date: str | No
     fc = await _forecast(ctx, p)
     marine = await _marine(ctx, p)
     tz = ZoneInfo(fc["timezone"])
+    if date == datetime.now(tz).date().isoformat():
+        date = None  # "today" means right now: lead with the current temperature
     h = fc["hourly"]
     rows = _window(h["time"], tz, date)
 
@@ -168,6 +170,16 @@ async def get_weather(ctx: ToolContext, place: str | None = None, date: str | No
                 "sky": sky(cur["weather_code"]),
             },
             "day": {"high": high, "low": low, "rain_chance_pct": rain_max, "sky": sky(daily["weather_code"][d])},
+            "outlook": [
+                {
+                    "date": daily["time"][k],
+                    "high": daily["temperature_2m_max"][k],
+                    "low": daily["temperature_2m_min"][k],
+                    "sky": sky(daily["weather_code"][k]),
+                    "rain_chance_pct": daily["precipitation_probability_max"][k],
+                }
+                for k in range(len(daily["time"]))
+            ],
             "sunrise": sunrise.strftime("%H:%M"),
             "sunset": sunset.strftime("%H:%M"),
             "hourly": hourly,
