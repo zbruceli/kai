@@ -111,3 +111,42 @@ def test_geocode_prefers_places_near_home():
 def test_note_card_is_happy_camera(ctx):
     r = asyncio.run(tools.call("save_note", {"text": "golden hour at Pigeon Point"}, ctx))
     assert r.card["icon"] == "camera" and r.card["mood"] == "happy"
+
+
+def test_resolve_day():
+    from datetime import date
+
+    from kai_relay.tools.days import describe_day, resolve_day
+
+    thu = date(2026, 9, 24)
+    assert resolve_day(None, thu) == thu
+    assert resolve_day("tonight", thu) == thu
+    assert resolve_day("tomorrow morning", thu) == date(2026, 9, 25)
+    assert resolve_day("day after tomorrow", thu) == date(2026, 9, 26)
+    assert resolve_day("Saturday", thu) == date(2026, 9, 26)
+    assert resolve_day("thursday", thu) == thu
+    assert resolve_day("next Thursday", thu) == date(2026, 10, 1)
+    assert resolve_day("2026-09-30", thu) == date(2026, 9, 30)
+    with pytest.raises(tools.ToolError):
+        resolve_day("whenever", thu)
+    assert describe_day(date(2026, 9, 26), thu) == "Sat 9/26"
+
+
+def test_backstop_infers_tool_calls():
+    from kai_relay.backstop import infer_tool_call
+
+    assert infer_tool_call("When is high and low tide tomorrow in Half Moon Bay?", None) == (
+        "get_tides", {"place": "Half Moon Bay", "day": "tomorrow"})
+    assert infer_tool_call("And what about the day after?", "Half Moon Bay") is None  # no topic, no history
+    assert infer_tool_call("And what about the day after?", "Half Moon Bay", "get_tides") == (
+        "get_tides", {"place": "Half Moon Bay", "day": "day after"})
+    assert infer_tool_call("What about Saturday?", "Pescadero", "get_weather") == (
+        "get_weather", {"place": "Pescadero", "day": "saturday"})
+    assert infer_tool_call("When's the next low tide?", "Pillar Point") == ("get_tides", {"place": "Pillar Point"})
+    assert infer_tool_call("Tide times for Pillar Point today.", None) == (
+        "get_tides", {"place": "Pillar Point", "day": "today"})
+    assert infer_tool_call("What's the weather in San Mateo on Saturday?", None) == (
+        "get_weather", {"place": "San Mateo", "day": "saturday"})
+    assert infer_tool_call("When's golden hour at Pescadero tonight?", None) == (
+        "get_sun_times", {"place": "Pescadero", "day": "tonight"})
+    assert infer_tool_call("Who won the Giants game?", None) is None

@@ -104,6 +104,8 @@ firmware/            PlatformIO, Arduino-ESP32 3.x, M5Unified
 relay/
   kai_relay/session.py   device <-> Gemini Live bridge (wire protocol documented at the top)
   kai_relay/persona.py   Kai's system prompt
+  kai_relay/backstop.py  runs the right tool itself when Gemini answers a tide/weather/light/parking
+                         question without one, so a card always appears
   kai_relay/tools/       one file per capability; add a tool with the @tool decorator
   deploy/                systemd unit for the Pi
 ```

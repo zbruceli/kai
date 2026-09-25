@@ -28,7 +28,7 @@ from google.genai import types
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
 
-from . import tools
+from . import backstop, tools
 from .config import Settings
 from .persona import system_prompt
 
@@ -68,6 +68,11 @@ class KaiSession:
         self._caption = ""
         self._heard = ""
         self._audio_bytes = 0
+        # Per utterance (one button press): what was said, and whether a card reached the screen.
+        self._utterance = ""
+        self._card_sent = False
+        self._last_place: str | None = None
+        self._last_tool: str | None = None
         self._last_activity = time.monotonic()
 
     # ---- device side -------------------------------------------------------
@@ -96,6 +101,8 @@ class KaiSession:
             await self._send({"type": "state", "state": "idle"})
         elif kind == "ptt_start":
             self._ptt = True
+            self._utterance = ""
+            self._card_sent = False
             self._activity_open = False
             self._pending.clear()
             self._pending_bytes = 0
@@ -225,14 +232,13 @@ class KaiSession:
             await self._send({"type": "state", "state": "thinking"})
             calls = msg.tool_call.function_calls or []
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
-            for r in results:
+            for fc, r in zip(calls, results):
+                if (fc.args or {}).get("place"):
+                    self._last_place = fc.args["place"]
                 if r.card:
-                    await self._send({
-                        **r.card,
-                        "type": "card",
-                        "title": screen_text(r.card["title"]),
-                        "lines": [screen_text(line) for line in r.card["lines"]],
-                    })
+                    self._last_tool = fc.name
+                if r.card:
+                    await self._send_card(r.card)
             await live.send_tool_response(
                 function_responses=[
                     types.FunctionResponse(id=fc.id, name=fc.name, response=r.data) for fc, r in zip(calls, results)
@@ -246,6 +252,7 @@ class KaiSession:
             await self._send({"type": "interrupted"})
         if sc.input_transcription and sc.input_transcription.text:
             self._heard += sc.input_transcription.text
+            self._utterance += sc.input_transcription.text
         # While the button is held, anything Kai was still saying is stale.
         if sc.model_turn and not self._ptt:
             for part in sc.model_turn.parts or []:
@@ -263,9 +270,35 @@ class KaiSession:
             log.info("[%s] kai (%.1fs audio): %s", self.device, speech_s, self._caption.strip() or "-")
             if self._caption.strip() and not self._audio_bytes:
                 log.warning("[%s] turn had a transcript but no audio", self.device)
+            if self._audio_bytes and not self._card_sent:
+                self._card_sent = True  # at most one backstop per utterance
+                asyncio.create_task(self._backstop_card(self._utterance))
             self._heard = self._caption = ""
             self._audio_bytes = 0
             await self._send({"type": "turn_complete"})
+
+    async def _send_card(self, card: dict) -> None:
+        self._card_sent = True
+        await self._send({
+            **card,
+            "type": "card",
+            "title": screen_text(card["title"]),
+            "lines": [screen_text(line) for line in card["lines"]],
+        })
+
+    async def _backstop_card(self, said: str) -> None:
+        """Gemini answered without a tool; if the question clearly wanted one, run it so a card appears."""
+        inferred = backstop.infer_tool_call(said, self._last_place, self._last_tool)
+        if not inferred:
+            return
+        name, args = inferred
+        log.info("[%s] backstop: Gemini skipped the tool, running %s(%s)", self.device, name, args)
+        result = await tools.call(name, args, self.ctx)
+        if result.card and "error" not in result.data:
+            if args.get("place"):
+                self._last_place = args["place"]
+            self._last_tool = name
+            await self._send_card(result.card)
 
     async def _idle_watchdog(self) -> None:
         """Drop the Gemini session when unused: resets context and stops paying for a growing history."""

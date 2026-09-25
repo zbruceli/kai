@@ -8,7 +8,8 @@ from astral import Observer
 from astral.sun import SunDirection, blue_hour, golden_hour
 
 from . import geo
-from .registry import ToolContext, ToolResult, card, short_time, tool
+from .days import DAY_PARAM, resolve_day
+from .registry import ToolContext, ToolError, ToolResult, card, short_time, tool
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
@@ -99,16 +100,20 @@ def _day_index(daily_times: list[str], day: str | None, tz: ZoneInfo) -> int:
     "Call it for every weather question, including repeats and follow-ups: it refreshes the card on screen.",
     {
         "place": {"type": "STRING", "description": "Spot, beach, lake or town. Omit for home."},
-        "date": {"type": "STRING", "description": "A future day YYYY-MM-DD (up to 3 days ahead). Omit for today/now."},
+        "day": DAY_PARAM,
     },
 )
-async def get_weather(ctx: ToolContext, place: str | None = None, date: str | None = None) -> ToolResult:
+async def get_weather(ctx: ToolContext, place: str | None = None, day: str | None = None) -> ToolResult:
     p = await geo.resolve(ctx, place)
     fc = await _forecast(ctx, p)
     marine = await _marine(ctx, p)
     tz = ZoneInfo(fc["timezone"])
-    if date == datetime.now(tz).date().isoformat():
-        date = None  # "today" means right now: lead with the current temperature
+    today = datetime.now(tz).date()
+    target = resolve_day(day, today)
+    if not 0 <= (target - today).days <= 3:
+        raise ToolError("I only have the forecast for the next three days.")
+    # Today means right now (lead with the current temperature); another day uses that day's summary.
+    date = None if target == today else target.isoformat()
     h = fc["hourly"]
     rows = _window(h["time"], tz, date)
 
@@ -192,17 +197,17 @@ async def get_weather(ctx: ToolContext, place: str | None = None, date: str | No
 @tool(
     "get_sun_times",
     "Photography light for a place and day: sunrise, sunset, morning/evening golden hour and blue hour, "
-    "plus cloud cover around sunrise and sunset.",
+    "plus cloud cover around sunrise and sunset. Call it for every light/sunset question, including repeats.",
     {
         "place": {"type": "STRING", "description": "Photo location. Omit for home."},
-        "date": {"type": "STRING", "description": "Day YYYY-MM-DD. Omit for today."},
+        "day": DAY_PARAM,
     },
 )
-async def get_sun_times(ctx: ToolContext, place: str | None = None, date: str | None = None) -> ToolResult:
+async def get_sun_times(ctx: ToolContext, place: str | None = None, day: str | None = None) -> ToolResult:
     p = await geo.resolve(ctx, place)
     fc = await _forecast(ctx, p)
     tz = ZoneInfo(fc["timezone"])
-    day = date_cls.fromisoformat(date) if date else datetime.now(tz).date()
+    day = resolve_day(day, datetime.now(tz).date())
     obs = Observer(latitude=p.lat, longitude=p.lon)
 
     def span(fn, direction):

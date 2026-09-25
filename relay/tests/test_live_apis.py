@@ -28,9 +28,16 @@ def test_sun_times(ctx):  # noqa: F811
 
 
 def test_weather_inland_named_day(ctx):  # noqa: F811
+    r = asyncio.run(tools.call("get_weather", {"place": "San Mateo, CA", "day": "tomorrow"}, ctx))
+    assert r.data["day"]["high"] is not None, r.data
+    print(r.card)
+
+
+def test_tides_tomorrow_is_one_day(ctx):  # noqa: F811
     from datetime import date, timedelta
 
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
-    r = asyncio.run(tools.call("get_weather", {"place": "San Mateo, CA", "date": tomorrow}, ctx))
-    assert r.data["day"]["high"] is not None, r.data
+    r = asyncio.run(tools.call("get_tides", {"place": "Half Moon Bay", "day": "tomorrow"}, ctx))
+    tomorrow = date.today() + timedelta(days=1)
+    assert r.card["title"] == "Tides tomorrow", r.card
+    assert all(t["time"].startswith(f"{tomorrow:%a}") for t in r.data["tides"]), r.data
     print(r.card)

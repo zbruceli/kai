@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 
 from . import geo
+from .days import DAY_PARAM, describe_day, resolve_day
 from .registry import ToolContext, ToolError, ToolResult, card, short_time, tool
 
 STATIONS_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json"
@@ -39,20 +40,22 @@ def nearest_station(all_stations: list[dict], lat: float, lon: float) -> tuple[d
 
 @tool(
     "get_tides",
-    "High and low tide times near a place, from the nearest NOAA station (US coasts only).",
+    "High and low tide times near a place from the nearest NOAA station (US coasts). Call it for every tide "
+    "question, including repeats and follow-ups: it refreshes the card on screen.",
     {
         "place": {"type": "STRING", "description": "Beach, harbor, pier or town. Omit for home."},
-        "date": {"type": "STRING", "description": "Start date YYYY-MM-DD. Omit for today."},
-        "days": {"type": "INTEGER", "description": "Number of days, 1-3. Default 2."},
+        "day": DAY_PARAM,
     },
 )
-async def get_tides(ctx: ToolContext, place: str | None = None, date: str | None = None, days: int = 2) -> ToolResult:
+async def get_tides(ctx: ToolContext, place: str | None = None, day: str | None = None) -> ToolResult:
     p = await geo.resolve(ctx, place)
     station, dist = nearest_station(await stations(ctx), p.lat, p.lon)
     if dist > MAX_STATION_KM:
         raise ToolError(f"There's no NOAA tide station within {MAX_STATION_KM} km of {p.name}. I only cover US tides so far.")
 
-    start = datetime.strptime(date, "%Y-%m-%d") if date else datetime.now()
+    now = datetime.now()  # the relay runs in the same time zone as the coast it's asked about
+    target = resolve_day(day, now.date())
+    is_today = target == now.date()
     imperial = ctx.settings.imperial
     r = await ctx.http.get(
         DATA_URL,
@@ -60,8 +63,9 @@ async def get_tides(ctx: ToolContext, place: str | None = None, date: str | None
             "product": "predictions",
             "application": "kai",
             "station": station["id"],
-            "begin_date": start.strftime("%Y%m%d"),
-            "range": 24 * max(1, min(int(days), 3)),
+            "begin_date": target.strftime("%Y%m%d"),
+            # Today: the next tides even past midnight. Another day: just that day.
+            "range": 48 if is_today else 24,
             "datum": "MLLW",
             "interval": "hilo",
             "time_zone": "lst_ldt",
@@ -78,21 +82,24 @@ async def get_tides(ctx: ToolContext, place: str | None = None, date: str | None
     tides = []
     for pred in body.get("predictions", []):
         when = datetime.strptime(pred["t"], "%Y-%m-%d %H:%M")
+        if is_today and when < now:
+            continue
         tides.append({"time": when, "type": "high" if pred["type"] == "H" else "low", "height": float(pred["v"])})
+    tides = tides[:4]
 
-    # Skip tides that already happened today so the card starts with the next one.
-    now = datetime.now()
-    upcoming = [t for t in tides if t["time"] >= now] if not date else tides
-    lines = [f"{t['time']:%a} {short_time(t['time'])} {'High' if t['type'] == 'high' else 'Low '} {t['height']:.1f}{unit}" for t in upcoming]
-
+    lines = [
+        f"{t['time']:%a} {short_time(t['time'])} {'High' if t['type'] == 'high' else 'Low '} {t['height']:.1f}{unit}"
+        for t in tides
+    ]
+    lines.append(f"NOAA {station['name'].split(',')[0]}")
     return ToolResult(
         {
+            "day": f"{target:%A %Y-%m-%d}",
+            "next_tides_from_now": is_today,
             "station": station["name"],
             "station_distance_km": round(dist, 1),
             "units": unit,
-            "datum": "MLLW",
-            "local_times": True,
-            "tides": [{**t, "time": t["time"].strftime("%a %Y-%m-%d %H:%M")} for t in upcoming],
+            "tides": [{**t, "time": t["time"].strftime("%a %H:%M")} for t in tides],
         },
-        card(f"Tides {station['name']}", lines, icon="fishing"),
+        card(f"Tides {describe_day(target, now.date())}", lines, icon="fishing"),
     )

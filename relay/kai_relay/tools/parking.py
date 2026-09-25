@@ -10,7 +10,7 @@ WALK_M_PER_MIN = 80
 
 @tool(
     "find_parking",
-    "Find the closest parking lots and garages to a place.",
+    "Find the closest parking lots and garages to a place. Call it for every parking question, including repeats.",
     {
         "place": {"type": "STRING", "description": "Destination, e.g. 'Ferry Building' or 'Pigeon Point Lighthouse'. Omit for home."},
         "radius_m": {"type": "INTEGER", "description": "Search radius in meters, default 1500."},
