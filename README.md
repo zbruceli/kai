@@ -127,3 +127,7 @@ relay/
 - [ ] v2: phone companion as transport + GPS ("near me" for real, location-tagged notes), relay on Cloud Run
       with per-device tokens
 - [ ] Optional M5 Unit CAM on the Grove port for "what am I looking at?"
+
+## License
+
+MIT, see [LICENSE](LICENSE).
