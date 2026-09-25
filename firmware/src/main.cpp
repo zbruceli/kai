@@ -8,21 +8,40 @@
 #include <M5Unified.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <driver/rtc_io.h>
+#include <esp_heap_caps.h>
+#include <esp_sleep.h>
 
 #include "audio.h"
 #include "face.h"
 #include "secrets.h"
 
-static constexpr const char* FW_VERSION = "0.5.0";
+static constexpr const char* FW_VERSION = "0.6.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 60000;    // reply screen returns to the face after this idle time
-// Power: on this LCD the backlight is what costs battery (pixel colour doesn't matter), so dim it, then
-// switch it off. Any button wakes Kai; the front button also starts listening straight away.
+
+// Power: on this LCD the backlight costs battery (pixel colour doesn't), and the Wi-Fi radio costs even
+// more. On battery Kai dims, then deep-sleeps; on USB it only turns the screen off so it stays instant.
 static constexpr uint8_t BRIGHTNESS_AWAKE = 90;
 static constexpr uint8_t BRIGHTNESS_DIM = 15;
 static constexpr uint32_t DIM_AFTER_MS = 60000;
-static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;
+static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 3 * 60000;  // on battery
+static constexpr uint32_t SCREEN_OFF_AFTER_MS = 4 * 60000;  // on USB
+
+// Buttons (active low), both RTC-capable so they can wake the chip from deep sleep.
+static constexpr gpio_num_t PIN_BTN_A = GPIO_NUM_11;
+static constexpr gpio_num_t PIN_BTN_B = GPIO_NUM_12;
+
+// Waking with the front button held starts recording at once; speech is kept here until the relay is
+// reachable, then sent as one utterance.
+static constexpr uint32_t EARLY_TALK_MAX_MS = 15000;
+static constexpr size_t EARLY_TALK_BYTES = audio::MIC_RATE * 2 * EARLY_TALK_MAX_MS / 1000;
+
+// Survive deep sleep: skip the Wi-Fi scan and the mDNS lookup on wake.
+RTC_DATA_ATTR static uint8_t cachedBssid[6];
+RTC_DATA_ATTR static int32_t cachedChannel = 0;
+RTC_DATA_ATTR static uint32_t cachedRelayIp = 0;
 
 enum class Mode { Offline, Idle, Listening, Thinking, Reply };
 
@@ -30,6 +49,13 @@ static WebSocketsClient ws;
 static Mode mode = Mode::Offline;
 static bool wsStarted = false;
 static bool wsConnected = false;
+static bool everConnected = false;
+static bool wokeFromSleep = false;
+static uint32_t wsBeganAt = 0;
+static bool usedRelayCache = false;
+static uint32_t wifiBeganAt = 0;
+static bool usedWifiCache = false;
+static bool wifiCached = false;
 static bool turnComplete = false;
 static uint32_t turnCompleteAt = 0;
 static bool hushed = false;  // user silenced this answer: drop the rest of it
@@ -41,13 +67,20 @@ static uint32_t lastBatteryRead = 0;
 static bool dimmed = false;
 static bool screenOff = false;
 
+static bool earlyTalk = false;       // capturing speech before the relay is connected
+static bool earlyTalkEnded = false;  // ...and the button was already released
+static uint32_t earlyTalkSince = 0;
+static uint8_t* earlyBuf = nullptr;
+static size_t earlyLen = 0;
+
 // ---------------------------------------------------------------------------
 
 static void setMode(Mode m) {
   mode = m;
   modeSince = millis();
   switch (m) {
-    case Mode::Offline:   face::setExpr(Expr::Offline); break;
+    // Freshly woken and still reconnecting: Kai is waking up, not broken.
+    case Mode::Offline:   face::setExpr(wokeFromSleep && !everConnected ? Expr::Sleeping : Expr::Offline); break;
     case Mode::Idle:      face::setExpr(Expr::Idle); break;
     case Mode::Listening: face::setExpr(Expr::Listening); break;
     case Mode::Thinking:  face::setExpr(Expr::Thinking); break;
@@ -71,18 +104,52 @@ static void wake() {
   }
 }
 
+[[noreturn]] static void goToDeepSleep() {
+  log_i("deep sleep");
+  if (wsConnected) ws.disconnect();
+  audio::clearPlayback();
+  M5.Speaker.end();
+  M5.Mic.end();
+  M5.Display.setBrightness(0);
+  M5.Display.sleep();
+  M5.Display.waitDisplay();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // A button still held would wake us straight back up.
+  while (digitalRead(PIN_BTN_A) == LOW || digitalRead(PIN_BTN_B) == LOW) delay(10);
+
+  const uint64_t mask = (1ULL << PIN_BTN_A) | (1ULL << PIN_BTN_B);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 3, 0)
+  esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+#else
+  esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+#endif
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keeps the pull-ups alive
+  for (gpio_num_t pin : {PIN_BTN_A, PIN_BTN_B}) {
+    rtc_gpio_pullup_en(pin);
+    rtc_gpio_pulldown_dis(pin);
+  }
+  esp_deep_sleep_start();
+}
+
 static void powerSave(uint32_t now) {
   if (mode != Mode::Idle && mode != Mode::Offline) return;
+  if (earlyTalk) return;
   const uint32_t idle = now - lastInteraction;
   if (!dimmed && idle > DIM_AFTER_MS) {
     M5.Display.setBrightness(BRIGHTNESS_DIM);
     if (mode == Mode::Idle) face::setExpr(Expr::Sleeping);
     dimmed = true;
   }
-  if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
-    M5.Display.setBrightness(0);
-    M5.Display.sleep();
-    screenOff = true;
+  if (audio::onUsbPower()) {
+    if (!screenOff && idle > SCREEN_OFF_AFTER_MS) {
+      M5.Display.setBrightness(0);
+      M5.Display.sleep();
+      screenOff = true;
+    }
+  } else if (idle > DEEP_SLEEP_AFTER_MS) {
+    goToDeepSleep();
   }
 }
 
@@ -103,8 +170,18 @@ static void sendType(const char* type) {
 }
 
 static void sendMic(const int16_t* samples, size_t count) {
-  ws.sendBIN(reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t));
+  const size_t bytes = count * sizeof(int16_t);
+  if (earlyTalk) {
+    if (earlyBuf && earlyLen + bytes <= EARLY_TALK_BYTES) {
+      memcpy(earlyBuf + earlyLen, samples, bytes);
+      earlyLen += bytes;
+    }
+    return;
+  }
+  ws.sendBIN(reinterpret_cast<const uint8_t*>(samples), bytes);
 }
+
+static void discardMic(const int16_t*, size_t) {}
 
 // Anything Kai sends back (speech, words, a card) lands on the reply screen, whatever we were showing.
 static void replyActivity() {
@@ -115,6 +192,46 @@ static void replyActivity() {
 static void showCard(const Card& c) {
   face::setReplyCard(c);
   replyActivity();
+}
+
+static void beginTurn() {
+  face::clearReply();
+  hushed = false;
+  turnComplete = false;
+  wasSpeaking = false;
+}
+
+// ---- early talk (woken by holding the front button) ----------------------
+
+static void startEarlyTalk() {
+  if (!earlyBuf) earlyBuf = static_cast<uint8_t*>(heap_caps_malloc(EARLY_TALK_BYTES, MALLOC_CAP_SPIRAM));
+  earlyLen = 0;
+  earlyTalk = true;
+  earlyTalkEnded = false;
+  earlyTalkSince = millis();
+  beginTurn();
+  audio::startMic();
+  face::setStatusText("");
+  setMode(Mode::Listening);
+}
+
+// Relay just connected: replay what was said while we were waking up, then carry on live.
+static void flushEarlyTalk() {
+  earlyTalk = false;
+  sendType("ptt_start");
+  for (size_t i = 0; i < earlyLen; i += 4096) ws.sendBIN(earlyBuf + i, min<size_t>(4096, earlyLen - i));
+  earlyLen = 0;
+  if (earlyTalkEnded) {
+    sendType("ptt_end");
+    setMode(Mode::Thinking);  // restart the timeout from now
+  }
+}
+
+static void abandonEarlyTalk() {
+  if (mode == Mode::Listening) audio::stopMic(discardMic);
+  earlyTalk = false;
+  earlyLen = 0;
+  setMode(Mode::Offline);
 }
 
 // ---- relay messages --------------------------------------------------------
@@ -156,6 +273,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
       wsConnected = true;
+      everConnected = true;
       JsonDocument hello;
       hello["type"] = "hello";
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
@@ -165,13 +283,18 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       serializeJson(hello, out);
       ws.sendTXT(out);
       face::setStatusText("");
-      setMode(Mode::Idle);
+      if (earlyTalk) {
+        flushEarlyTalk();
+      } else {
+        setMode(Mode::Idle);
+      }
       break;
     }
     case WStype_DISCONNECTED:
-      if (wsConnected) log_w("relay disconnected");
+      if (!wsConnected) break;  // a failed connection attempt; keep retrying quietly
+      log_w("relay disconnected");
       wsConnected = false;
-      if (mode == Mode::Listening) audio::stopMic([](const int16_t*, size_t) {});
+      if (mode == Mode::Listening) audio::stopMic(discardMic);
       audio::clearPlayback();
       face::setStatusText("finding relay...");
       setMode(Mode::Offline);
@@ -194,37 +317,80 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
 
 // ---- connectivity ----------------------------------------------------------
 
+static void startWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  wifiBeganAt = millis();
+  if (cachedChannel > 0) {
+    WiFi.begin(WIFI_SSID, WIFI_PASS, cachedChannel, cachedBssid);  // skips the channel scan
+    usedWifiCache = true;
+  } else {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
+}
+
 static void startRelayConnection() {
   String host = RELAY_HOST;
+  usedRelayCache = false;
   if (host.endsWith(".local")) {
-    // Arduino's DNS doesn't do mDNS; ask explicitly.
-    IPAddress ip = MDNS.queryHost(host.substring(0, host.length() - 6), 3000);
-    if (ip == IPAddress()) {
-      face::setStatusText(String("can't find ") + host);
-      return;  // retried from loop()
+    if (cachedRelayIp) {
+      host = IPAddress(cachedRelayIp).toString();
+      usedRelayCache = true;
+    } else {
+      // Arduino's DNS doesn't do mDNS; ask explicitly.
+      static bool mdnsStarted = false;
+      if (!mdnsStarted) mdnsStarted = MDNS.begin("kai-stick");
+      IPAddress ip = MDNS.queryHost(host.substring(0, host.length() - 6), 3000);
+      if (ip == IPAddress()) {
+        if (!earlyTalk) face::setStatusText(String("can't find ") + host);
+        return;  // retried from loop()
+      }
+      cachedRelayIp = uint32_t(ip);
+      host = ip.toString();
     }
-    host = ip.toString();
   }
   ws.begin(host, RELAY_PORT, "/ws");
   ws.setExtraHeaders("Authorization: Bearer " KAI_DEVICE_TOKEN);
   ws.onEvent(onWsEvent);
-  ws.setReconnectInterval(3000);
+  ws.setReconnectInterval(wokeFromSleep ? 1000 : 3000);
   ws.enableHeartbeat(15000, 3000, 2);
   wsStarted = true;
-  face::setStatusText("finding relay...");
+  wsBeganAt = millis();
+  if (!earlyTalk) face::setStatusText(wokeFromSleep ? "waking up..." : "finding relay...");
 }
 
 static void maintainConnection() {
   static uint32_t lastTry = 0;
+  const uint32_t now = millis();
+
   if (WiFi.status() != WL_CONNECTED) {
-    if (mode != Mode::Offline) setMode(Mode::Offline);
-    face::setStatusText("connecting wifi...");
+    if (usedWifiCache && now - wifiBeganAt > 5000) {  // access point moved: fall back to a full scan
+      usedWifiCache = false;
+      cachedChannel = 0;
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+    }
+    if (!earlyTalk) {
+      if (mode != Mode::Offline) setMode(Mode::Offline);
+      face::setStatusText(wokeFromSleep && !everConnected ? "waking up..." : "connecting wifi...");
+    }
     return;
   }
-  if (!wsStarted && millis() - lastTry > 5000) {
-    lastTry = millis();
-    static bool mdnsStarted = false;
-    if (!mdnsStarted) mdnsStarted = MDNS.begin("kai-stick");
+  if (!wifiCached) {
+    memcpy(cachedBssid, WiFi.BSSID(), 6);
+    cachedChannel = WiFi.channel();
+    wifiCached = true;
+  }
+
+  // The relay may have a new address since we cached it: drop the cache and look it up again.
+  if (wsStarted && !wsConnected && usedRelayCache && now - wsBeganAt > 6000) {
+    ws.disconnect();
+    wsStarted = false;
+    cachedRelayIp = 0;
+    lastTry = 0;
+  }
+  if (!wsStarted && (lastTry == 0 || now - lastTry > 5000)) {
+    lastTry = now;
     startRelayConnection();
   }
 }
@@ -237,7 +403,7 @@ static void showStatus() {
   c.lines[c.count++] = String("WiFi ") + WiFi.localIP().toString() + " " + String(WiFi.RSSI()) + "dB";
   c.lines[c.count++] = String("Relay ") + (wsConnected ? "connected" : "offline");
   c.lines[c.count++] = String("Battery ") + String(M5.Power.getBatteryLevel()) + "%" +
-                       (M5.Power.isCharging() ? " charging" : "");
+                       (audio::onUsbPower() ? " on USB" : "");
   c.lines[c.count++] = String("Firmware ") + FW_VERSION;
   face::clearReply();
   showCard(c);
@@ -253,17 +419,18 @@ static void handleButtons() {
 
   // Front: push to talk (also barges in while Kai is talking).
   if (M5.BtnA.wasPressed() && wsConnected && mode != Mode::Listening) {
+    beginTurn();
     audio::startMic();
-    face::clearReply();
-    hushed = false;
-    turnComplete = false;
-    wasSpeaking = false;
     sendType("ptt_start");
     setMode(Mode::Listening);
   }
   if (M5.BtnA.wasReleased() && mode == Mode::Listening) {
     audio::stopMic(sendMic);
-    sendType("ptt_end");
+    if (earlyTalk) {
+      earlyTalkEnded = true;  // sent as soon as the relay connects
+    } else {
+      sendType("ptt_end");
+    }
     setMode(Mode::Thinking);
   }
 
@@ -293,16 +460,26 @@ void setup() {
   M5.begin(cfg);
   Serial.begin(115200);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  bool wokeToTalk = false;
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+    wokeFromSleep = true;
+    wokeToTalk = esp_sleep_get_ext1_wakeup_status() & (1ULL << PIN_BTN_A);
+  }
 
+  startWifi();
   face::begin();
+  M5.Display.setBrightness(BRIGHTNESS_AWAKE);
   if (!audio::begin()) log_e("PSRAM allocation failed: check board_build.arduino.memory_type");
   face::setBattery(M5.Power.getBatteryLevel());
-  face::setStatusText("connecting wifi...");
-  setMode(Mode::Offline);
   lastInteraction = millis();
+
+  M5.update();
+  if (wokeToTalk && M5.BtnA.isPressed()) {
+    startEarlyTalk();
+  } else {
+    face::setStatusText(wokeFromSleep ? "waking up..." : "connecting wifi...");
+    setMode(Mode::Offline);
+  }
 }
 
 void loop() {
@@ -312,6 +489,8 @@ void loop() {
   handleButtons();
 
   uint32_t now = millis();
+  if (earlyTalk && now - earlyTalkSince > EARLY_TALK_MAX_MS) abandonEarlyTalk();
+
   switch (mode) {
     case Mode::Listening:
       audio::pollMic(sendMic);
@@ -319,6 +498,7 @@ void loop() {
       break;
 
     case Mode::Thinking:
+      if (earlyTalk) break;  // still waiting for the relay; abandonEarlyTalk() handles the timeout
       if (turnComplete && now - turnCompleteAt > EMPTY_TURN_GRACE_MS) {
         setMode(Mode::Idle);  // nothing came back
       } else if (now - modeSince > THINKING_TIMEOUT_MS) {

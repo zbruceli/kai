@@ -39,10 +39,14 @@ Every answer is spoken **and** shown: the reply screen has a mini face in the he
 (tides, conditions, ...) and then a live transcript of what Kai says. It follows along while Kai talks,
 jumps back to the top when it's done, and returns to the face after a minute.
 
-Power: after a minute idle Kai falls asleep and the backlight dims; after four minutes the screen turns
-off. Any button wakes it (the front button also starts listening). The display is an LCD, so the
-backlight, not pixel colour, is what costs battery; the dark theme is for looks. Build with
-`-DKAI_LIGHT_THEME` for the cream variant.
+Power: after a minute idle Kai falls asleep and the backlight dims. On battery, after three minutes the
+Stick deep-sleeps (Wi-Fi off); either button wakes it in a few seconds. Holding the front button to wake
+starts recording immediately, so you can just press and talk: speech is buffered until the relay
+reconnects. On USB it never deep-sleeps, it only turns the screen off after four minutes, so it answers
+instantly on a desk. Deep sleep drops Gemini's conversation context.
+
+The display is an LCD, so the backlight, not pixel colour, is what costs battery; the dark theme is for
+looks. Build with `-DKAI_LIGHT_THEME` for the cream variant.
 
 ## Setup
 
@@ -107,7 +111,8 @@ relay/
 ## Roadmap
 
 - [x] M0–M3: push-to-talk voice, search, notes, tides, conditions, light, parking, cards
-- [ ] M4: IMU gestures (shake = cancel, lift = wake), deep sleep between uses, OTA updates, battery tuning
+- [x] Deep sleep between uses, press-and-talk from sleep
+- [ ] M4: IMU gestures (shake = cancel, lift = wake), OTA updates, battery measurements
 - [ ] Session resumption so context survives Gemini's ~10 min connection limit
 - [ ] v2: phone companion as transport + GPS ("near me" for real, location-tagged notes), relay on Cloud Run
       with per-device tokens

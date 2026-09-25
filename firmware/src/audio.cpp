@@ -45,9 +45,6 @@ void boost(int16_t* s, size_t n) {
   }
 }
 
-bool onUsbPower() {
-  return M5.Power.isCharging() == m5::Power_Class::is_charging || M5.Power.getVBUSVoltage() > 4000;
-}
 
 float rms(const int16_t* s, size_t n) {
   if (n == 0) return 0;
@@ -151,6 +148,10 @@ void clearPlayback() {
 bool playbackIdle() { return ringCount < 2 && !M5.Speaker.isPlaying(); }
 
 float level() { return lastLevel; }
+
+bool onUsbPower() {
+  return M5.Power.isCharging() == m5::Power_Class::is_charging || M5.Power.getVBUSVoltage() > 4000;
+}
 
 void updateVolume() { M5.Speaker.setVolume(onUsbPower() ? VOLUME_USB : VOLUME_BATTERY); }
 
