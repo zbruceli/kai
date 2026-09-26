@@ -17,9 +17,14 @@ void resetDecoder();  // start of each answer
 // Encode one UP_FRAME of mic audio and append it (length-prefixed) at dst. Returns bytes written, or 0.
 size_t encodeEntry(const int16_t* pcm, uint8_t* dst, size_t cap);
 
-// Decode every packet in a downlink message, handing each chunk of 24 kHz PCM to sink.
+// Downlink: Gemini's answer arrives 3-4x faster than real time. Decoding each message on arrival
+// spent ~80% of the CPU for the first seconds and starved the speaker (garbled first sentences), so
+// messages are only queued here (compressed, ~4 KB per second of speech) and decoded just in time.
+bool queueMessage(const uint8_t* msg, size_t len);  // false if malformed or the queue is full
 using PcmSink = void (*)(const int16_t* samples, size_t count);
-void decodeMessage(const uint8_t* msg, size_t len, PcmSink sink);
+bool decodeNext(PcmSink sink);  // decode one queued packet; false when the queue is empty
+bool pending();                 // packets still waiting to be decoded
+void dropQueued();              // barge-in, hush, new turn
 
 // Average codec cost in microseconds per 20 ms frame since the last call (for telemetry builds).
 uint32_t takeEncodeUs();

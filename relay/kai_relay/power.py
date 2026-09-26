@@ -19,7 +19,7 @@ from pathlib import Path
 
 CAPACITY_MAH = 250
 FIELDS = ["ts", "device", "kind", "mode", "mv", "usb", "bright", "wifi_ps", "rssi", "up_s", "loop_hz",
-          "render_pct", "slept_s", "mv_before", "mv_after", "mhz", "enc_us", "dec_us"]
+          "render_pct", "slept_s", "mv_before", "mv_after", "mhz", "enc_us", "dec_us", "underruns"]
 
 # Typical 1-cell LiPo open-circuit voltage (mV) -> state of charge (%), light load.
 OCV = [(3270, 0), (3610, 5), (3690, 10), (3710, 15), (3730, 20), (3750, 25), (3770, 30), (3790, 35),

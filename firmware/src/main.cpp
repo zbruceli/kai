@@ -27,7 +27,9 @@ static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exact
 static constexpr const char* FW_VERSION = "0.9.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
-static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;    // reply screen returns to the face after this idle time
+static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
+static constexpr uint32_t DECODE_AHEAD_MS = 300;     // keep this much speech decoded ahead of the speaker
+static constexpr int DECODE_PER_LOOP = 4;            // ~16 ms of decoding per loop pass, at most    // reply screen returns to the face after this idle time
 
 // Power (see docs/POWER.md): most of each question's energy used to go to the idle tail after the
 // answer, so the tail is short, the radio naps and the CPU slows down whenever nothing is happening,
@@ -285,6 +287,7 @@ static void sendPowerReport(uint32_t now) {
   doc["mhz"] = getCpuFrequencyMhz();
   doc["enc_us"] = voice::takeEncodeUs();  // avg per 20 ms frame; real time needs well under 20000
   doc["dec_us"] = voice::takeDecodeUs();
+  doc["underruns"] = audio::takeUnderruns();  // speaker ran dry mid-answer
   String out;
   serializeJson(doc, out);
   ws.sendTXT(out);
@@ -308,6 +311,7 @@ static void showCard(const Card& c) {
 static void beginTurn() {
   voice::resetEncoder();
   voice::resetDecoder();
+  voice::dropQueued();
   face::clearReply();
   hushed = false;
   turnComplete = false;
@@ -383,6 +387,7 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     replyActivity();
   } else if (!strcmp(type, "interrupted")) {
     audio::clearPlayback();
+    voice::dropQueued();
   } else if (!strcmp(type, "turn_complete")) {
     turnComplete = true;
     turnCompleteAt = millis();
@@ -431,6 +436,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       wsConnected = false;
       if (mode == Mode::Listening) audio::stopMic(discardMic);
       audio::clearPlayback();
+      voice::dropQueued();
       face::setStatusText("finding relay...");
       setMode(Mode::Offline);
       break;
@@ -442,7 +448,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       // tool-call turn first and speak the answer in the next one.
       if (hushed || mode == Mode::Listening || mode == Mode::Offline) break;
       setBusy(true);
-      voice::decodeMessage(payload, length, playPcm);
+      voice::queueMessage(payload, length);  // decoded just in time in loop()
       turnComplete = false;
       replyActivity();
       break;
@@ -581,6 +587,7 @@ static void handleButtons() {
   if (M5.BtnB.wasHold()) {
     if (mode == Mode::Reply && !audio::playbackIdle()) {
       audio::clearPlayback();
+      voice::dropQueued();
       hushed = true;
     } else if (mode != Mode::Listening) {
       showStatus();
@@ -661,8 +668,11 @@ void loop() {
       break;
 
     case Mode::Reply: {
-      audio::pollSpeaker(turnComplete);
-      bool speaking = !audio::playbackIdle();
+      for (int i = 0; i < DECODE_PER_LOOP && audio::bufferedMs() < DECODE_AHEAD_MS; i++) {
+        if (!voice::decodeNext(playPcm)) break;
+      }
+      audio::pollSpeaker(turnComplete && !voice::pending());
+      bool speaking = !audio::playbackIdle() || voice::pending();
       face::setSpeaking(speaking);
       face::setLevel(audio::level());
       if (speaking) {

@@ -31,6 +31,11 @@ bool playbackIdle();
 void updateVolume();
 bool onUsbPower();
 
+// Milliseconds of decoded speech waiting to play, and underruns (speaker ran dry mid-answer) since the
+// last call, for telemetry.
+uint32_t bufferedMs();
+uint32_t takeUnderruns();
+
 // 0..1 loudness of the most recent chunk, for the face's mouth and the mic meter.
 float level();
 

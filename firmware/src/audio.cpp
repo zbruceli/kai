@@ -23,6 +23,7 @@ size_t playIdx = 0;
 bool playing = false;
 
 float lastLevel = 0;
+uint32_t underruns = 0;
 
 constexpr uint8_t ES8311_ADDR = 0x18;
 
@@ -157,6 +158,7 @@ void pollSpeaker(bool turnComplete) {
     playIdx = (playIdx + 1) % 3;
   }
   if (ringCount < 2 && !M5.Speaker.isPlaying(0)) {
+    if (!turnComplete) underruns++;
     playing = false;  // underrun or finished: prebuffer again before resuming
     lastLevel = 0;
   }
@@ -172,6 +174,14 @@ void clearPlayback() {
 bool playbackIdle() { return ringCount < 2 && (!M5.Speaker.isRunning() || !M5.Speaker.isPlaying()); }
 
 float level() { return lastLevel; }
+
+uint32_t bufferedMs() { return ringCount / (SPEAKER_RATE * 2 / 1000); }
+
+uint32_t takeUnderruns() {
+  const uint32_t n = underruns;
+  underruns = 0;
+  return n;
+}
 
 bool onUsbPower() {
   return M5.Power.isCharging() == m5::Power_Class::is_charging || M5.Power.getVBUSVoltage() > 4000;
