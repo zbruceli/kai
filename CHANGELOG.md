@@ -6,6 +6,9 @@
   ~32 kbit/s (was 384), about 11–12x less Wi-Fi airtime. On the Stick at 240 MHz, encoding takes ~6.4 ms
   and decoding ~3.9 ms per 20 ms frame (measured). Older firmware and `kai-sim` keep raw PCM.
 - Measurement builds log Opus encode/decode time per frame (`enc_us`, `dec_us`).
+- Kai's first sentences no longer stutter. Gemini sends an answer 3–4x faster than real time, and
+  decoding each Opus message on arrival starved the speaker. Packets are now queued compressed and
+  decoded just in time: 0 speaker underruns over four real answers (measured).
 - The sleeping z's are drawn as proper Z shapes (they read as "I").
 - README: animated hero of Kai's moods and a gallery of reply screens.
 
