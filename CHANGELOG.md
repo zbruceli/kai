@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.9.0: Opus voice
+
+**Upgrade order:** update the relay first (`git pull && uv sync --frozen`, which adds PyAV, and restart it),
+then flash the firmware. Relay 0.9 still serves older firmware over raw PCM, but firmware 0.9 needs relay
+0.9.
 
 - Opus voice between the Stick and the relay: 16 kHz mic at ~24 kbit/s (was 256) and 24 kHz speech at
   ~32 kbit/s (was 384), about 11–12x less Wi-Fi airtime. On the Stick at 240 MHz, encoding takes ~6.4 ms
