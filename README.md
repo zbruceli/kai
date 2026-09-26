@@ -1,7 +1,8 @@
 # Kai
 
 <p align="center">
-  <img src="docs/images/kai-moods.gif" width="480" alt="Kai's moods on the 240x135 screen: idle, listening, thinking, speaking, happy, sleeping, offline">
+  <img src="docs/images/kai-on-stick.jpg" width="440" alt="Kai's pixel face on the M5StickS3's screen: a small grey stick with a blue front button and a lanyard">
+  <br><sub>Kai on a real M5StickS3 (48 × 24 × 15 mm, 20 g), clipped to a lanyard.</sub>
 </p>
 
 A pocket AI pal on an **M5StickS3**: hold the button, ask, and Kai answers out loud with a face and
@@ -19,6 +20,10 @@ M5StickS3 ──── WebSocket (LAN) ────▶ home server: kai-relay  �
 ```
 
 ## Screens
+
+<p align="center">
+  <img src="docs/images/kai-moods.gif" width="480" alt="Kai's moods on the 240x135 screen: idle, listening, thinking, speaking, happy, sleeping, offline">
+</p>
 
 Every answer is spoken and shown: the tool's card, then a live transcript you can scroll.
 
