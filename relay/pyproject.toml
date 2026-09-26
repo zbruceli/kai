@@ -1,6 +1,6 @@
 [project]
 name = "kai-relay"
-version = "0.8.0"
+version = "0.9.0"
 description = "Home relay between the Kai M5StickS3 and the Gemini Live API"
 requires-python = ">=3.11"
 license = "MIT"
@@ -10,6 +10,8 @@ dependencies = [
     "httpx>=0.27",
     "astral>=3.2",
     "python-dotenv>=1.0",
+    "av>=14",          # bundled libopus for the Stick's Opus audio
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

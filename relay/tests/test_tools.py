@@ -169,3 +169,28 @@ def test_power_estimates(tmp_path):
     assert minutes == 30 and 15 < ma < 25                                # 30 mV in 30 min near 3.93 V = ~19 mA
     PowerLog(tmp_path).write("kai-1", "report", mode="idle", mv=3900, bogus=1)
     assert (tmp_path / "power.csv").read_text().splitlines()[0].startswith("ts,device,kind,mode")
+
+
+def test_opus_bundle_roundtrip():
+    from kai_relay import opus
+
+    packets = [bytes([i]) * (50 + i) for i in range(120)]
+    messages = opus.bundle(packets)
+    assert len(messages) > 1 and all(m[0] == opus.KIND_OPUS and len(m) <= opus.MAX_BUNDLE_BYTES for m in messages)
+    assert [p for m in messages for p in opus.unbundle(m)] == packets
+    assert opus.unbundle(bytes([opus.KIND_OPUS, 200, 0, 1, 2])) == []  # truncated: dropped, no crash
+
+
+def test_opus_codec_roundtrip():
+    import numpy as np
+
+    from kai_relay import opus
+
+    enc, dec = opus.Encoder(16000, 24000), opus.Decoder(16000)
+    tone = (np.sin(2 * np.pi * 440 * np.arange(16000) / 16000) * 8000).astype(np.int16).tobytes()
+    packets = enc.encode(tone[:15000]) + enc.encode(tone[15000:]) + enc.flush()
+    assert len(packets) == 50                                   # 1 s in 20 ms packets
+    assert sum(map(len, packets)) * 8 < 40000                   # ~24 kbit/s, vs 256 kbit/s PCM
+    pcm = b"".join(dec.decode(p) for p in packets)
+    assert abs(len(pcm) // 2 - 16000) < 800                     # back to ~1 s at 16 kHz
+    dec.decode(b"\xff\x00garbage")                             # corrupt packets never raise

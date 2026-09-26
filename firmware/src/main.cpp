@@ -18,8 +18,13 @@
 #include "audio.h"
 #include "face.h"
 #include "secrets.h"
+#include "voice_codec.h"
 
-static constexpr const char* FW_VERSION = "0.8.1";
+// libopus (fixed point) keeps sizeable frames on the stack; Arduino's default 8 KB loop stack is too tight.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
+
+static constexpr const char* FW_VERSION = "0.9.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;    // reply screen returns to the face after this idle time
@@ -230,16 +235,24 @@ static void sendType(const char* type) {
   ws.sendTXT(out);
 }
 
+// Mic frames go out as Opus (~24 kbit/s instead of 256 kbit/s of PCM): one 20 ms packet per message.
 static void sendMic(const int16_t* samples, size_t count) {
   const size_t bytes = count * sizeof(int16_t);
-  if (earlyTalk) {
+  if (earlyTalk) {  // relay not reachable yet: keep raw PCM, encoded when it's replayed
     if (earlyBuf && earlyLen + bytes <= EARLY_TALK_BYTES) {
       memcpy(earlyBuf + earlyLen, samples, bytes);
       earlyLen += bytes;
     }
     return;
   }
-  ws.sendBIN(reinterpret_cast<const uint8_t*>(samples), bytes);
+  uint8_t msg[1 + voice::MAX_ENTRY];
+  msg[0] = voice::KIND_OPUS;
+  const size_t n = voice::encodeEntry(samples, msg + 1, sizeof(msg) - 1);
+  if (n) ws.sendBIN(msg, n + 1);
+}
+
+static void playPcm(const int16_t* samples, size_t count) {
+  audio::enqueue(reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t));
 }
 
 static void discardMic(const int16_t*, size_t) {}
@@ -270,6 +283,8 @@ static void sendPowerReport(uint32_t now) {
   doc["loop_hz"] = span ? loopCount * 1000 / span : 0;
   doc["render_pct"] = span ? renderBusyUs / 10 / span : 0;  // % of time spent drawing
   doc["mhz"] = getCpuFrequencyMhz();
+  doc["enc_us"] = voice::takeEncodeUs();  // avg per 20 ms frame; real time needs well under 20000
+  doc["dec_us"] = voice::takeDecodeUs();
   String out;
   serializeJson(doc, out);
   ws.sendTXT(out);
@@ -291,6 +306,8 @@ static void showCard(const Card& c) {
 }
 
 static void beginTurn() {
+  voice::resetEncoder();
+  voice::resetDecoder();
   face::clearReply();
   hushed = false;
   turnComplete = false;
@@ -315,7 +332,19 @@ static void startEarlyTalk() {
 static void flushEarlyTalk() {
   earlyTalk = false;
   sendType("ptt_start");
-  for (size_t i = 0; i < earlyLen; i += 4096) ws.sendBIN(earlyBuf + i, min<size_t>(4096, earlyLen - i));
+  // Encode the buffered speech into bundles of 20 ms packets, each message under 4 KB.
+  static uint8_t bundle[4096];
+  size_t len = 1;
+  bundle[0] = voice::KIND_OPUS;
+  const size_t frameBytes = voice::UP_FRAME * sizeof(int16_t);
+  for (size_t i = 0; i + frameBytes <= earlyLen; i += frameBytes) {
+    if (len + voice::MAX_ENTRY > sizeof(bundle)) {
+      ws.sendBIN(bundle, len);
+      len = 1;
+    }
+    len += voice::encodeEntry(reinterpret_cast<const int16_t*>(earlyBuf + i), bundle + len, sizeof(bundle) - len);
+  }
+  if (len > 1) ws.sendBIN(bundle, len);
   earlyLen = 0;
   if (earlyTalkEnded) {
     sendType("ptt_end");
@@ -376,6 +405,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
+      hello["codecs"].to<JsonArray>().add("opus");  // needs relay 0.9+
 #ifdef KAI_TELEMETRY
       if (wokeFromSleep && sleptAtUs && !everConnected) {  // one deep-sleep measurement per wake
         JsonObject sleep = hello["sleep"].to<JsonObject>();
@@ -412,7 +442,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       // tool-call turn first and speak the answer in the next one.
       if (hushed || mode == Mode::Listening || mode == Mode::Offline) break;
       setBusy(true);
-      audio::enqueue(payload, length);
+      voice::decodeMessage(payload, length, playPcm);
       turnComplete = false;
       replyActivity();
       break;
@@ -589,6 +619,7 @@ void setup() {
   face::begin();
   backlight(BRIGHTNESS_AWAKE);
   if (!audio::begin()) log_e("PSRAM allocation failed: check board_build.arduino.memory_type");
+  if (!voice::begin()) log_e("Opus codec init failed");
   face::setBattery(M5.Power.getBatteryLevel());
   lastInteraction = millis();
 

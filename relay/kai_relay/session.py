@@ -1,10 +1,12 @@
 """Bridges one Stick WebSocket to one Gemini Live session.
 
 Device -> relay
-    text   {"type": "hello", "device": str, "battery": int, "fw": str, "sleep"?: {...}}
+    text   {"type": "hello", "device": str, "battery": int, "fw": str, "codecs"?: ["opus"], "sleep"?: {...}}
     text   {"type": "power", ...}   measurement firmware only (docs/POWER.md): logged to data/power.csv
     text   {"type": "ptt_start"}            button A pressed (also barges in on Kai speaking)
-    binary PCM16 mono 16 kHz mic audio      only between ptt_start and ptt_end
+    binary mic audio, only between ptt_start and ptt_end:
+           with "opus" in hello: 0x02 + Opus bundle, 16 kHz mono 20 ms packets (see opus.py)
+           otherwise: raw PCM16 mono 16 kHz (older firmware, kai-sim)
     text   {"type": "ptt_end"}              button A released
 Relay -> device
     text   {"type": "state", "state": "idle" | "thinking"}
@@ -12,7 +14,8 @@ Relay -> device
     text   {"type": "caption", "delta": str} next words of what Kai is saying (ASCII, for the screen)
     text   {"type": "interrupted"}           drop any queued speech
     text   {"type": "turn_complete"}
-    binary PCM16 mono 24 kHz speech, <= DEVICE_FRAME bytes per frame
+    binary Kai's speech: 0x02 + Opus bundle at 24 kHz if the device asked for opus, else raw PCM16
+           mono 24 kHz; <= DEVICE_FRAME bytes per message
 """
 
 import asyncio
@@ -30,7 +33,7 @@ from google.genai import types
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
 
-from . import backstop, tools
+from . import backstop, opus, tools
 from .power import PowerLog, sleep_estimate_ma
 from .config import Settings
 from .persona import system_prompt
@@ -41,6 +44,7 @@ IN_RATE = 16000
 # Presses shorter than this are taps, not questions: nothing is sent to Gemini.
 MIN_UTTERANCE_BYTES = IN_RATE * 2 * 300 // 1000
 DEVICE_FRAME = 4096
+OPUS_DOWN_BITRATE = 32000  # Kai's voice, 24 kHz mono; mic is encoded on the Stick
 OUT_BYTES_PER_S = 24000 * 2
 
 # The Stick's fonts are ASCII-only: map common typography, then strip accents ("Año Nuevo" -> "Ano Nuevo").
@@ -79,6 +83,8 @@ class KaiSession:
         self._last_tool: str | None = None
         self._utterance_id = 0
         self._tasks: set[asyncio.Task] = set()
+        self._opus_up: opus.Decoder | None = None    # set when the device's hello asks for Opus
+        self._opus_down: opus.Encoder | None = None
         self._model_busy = False  # Gemini is mid-answer
         self._drop_turn = False   # user hushed it with a tap: discard until turn_complete
         self._last_activity = time.monotonic()
@@ -91,7 +97,7 @@ class KaiSession:
             async for msg in self.ws:
                 self._last_activity = time.monotonic()
                 if isinstance(msg, bytes):
-                    await self._on_mic(msg)
+                    await self._on_mic(self._decode_mic(msg))
                     continue
                 try:
                     control = json.loads(msg)
@@ -114,9 +120,13 @@ class KaiSession:
         kind = m.get("type")
         if kind == "hello":
             self.device = m.get("device", "?")
+            if "opus" in (m.get("codecs") or []):
+                self._opus_up = opus.Decoder(16000)
+                self._opus_down = opus.Encoder(24000, OPUS_DOWN_BITRATE)
             # No reply needed: the device shows idle itself, and a "state: idle" here would knock it out of
             # Thinking when it replays speech captured while waking from deep sleep.
-            log.info("[%s] hello fw=%s battery=%s%%", self.device, m.get("fw"), m.get("battery"))
+            log.info("[%s] hello fw=%s battery=%s%% audio=%s", self.device, m.get("fw"), m.get("battery"),
+                     "opus" if self._opus_down else "pcm")
             if isinstance(m.get("sleep"), dict):
                 sl = m["sleep"]
                 self.power.write(self.device, "sleep", **sl)
@@ -128,6 +138,9 @@ class KaiSession:
         elif kind == "ptt_start":
             self._ptt = True
             self._utterance_id += 1
+            if self._opus_down:
+                self._opus_down.reset()  # anything Kai was still saying is stale
+                self._opus_up = opus.Decoder(16000)
             self._utterance = ""
             self._card_sent = False
             self._activity_open = False
@@ -178,8 +191,22 @@ class KaiSession:
         with contextlib.suppress(ConnectionClosed):
             await self.ws.send(json.dumps(obj))
 
-    async def _send_audio(self, pcm: bytes) -> None:
+    def _decode_mic(self, msg: bytes) -> bytes:
+        """Mic audio as PCM16 16 kHz, whatever the device sent."""
+        if not self._opus_up:
+            return msg
+        if not msg or msg[0] != opus.KIND_OPUS:
+            log.warning("[%s] unexpected binary frame kind", self.device)
+            return b""
+        return b"".join(self._opus_up.decode(p) for p in opus.unbundle(msg))
+
+    async def _send_audio(self, pcm: bytes, final: bool = False) -> None:
         try:
+            if self._opus_down:
+                packets = self._opus_down.encode(pcm) + (self._opus_down.flush() if final else [])
+                for message in opus.bundle(packets):
+                    await self.ws.send(message)
+                return
             for i in range(0, len(pcm), DEVICE_FRAME):
                 await self.ws.send(pcm[i : i + DEVICE_FRAME])
         except ConnectionClosed:
@@ -309,6 +336,8 @@ class KaiSession:
                 task.add_done_callback(self._tasks.discard)
             self._heard = self._caption = ""
             self._audio_bytes = 0
+            if self._opus_down:
+                await self._send_audio(b"", final=True)  # the last partial Opus frame
             await self._send({"type": "turn_complete"})
 
     async def _send_card(self, card: dict) -> None:

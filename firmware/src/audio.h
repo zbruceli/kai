@@ -6,7 +6,7 @@ namespace audio {
 
 constexpr uint32_t MIC_RATE = 16000;    // what Gemini Live expects
 constexpr uint32_t SPEAKER_RATE = 24000;  // what Gemini Live produces
-constexpr size_t MIC_CHUNK = 512;       // samples per frame sent to the relay (32 ms)
+constexpr size_t MIC_CHUNK = 320;       // samples per frame: 20 ms, one Opus packet
 
 using MicSink = void (*)(const int16_t* samples, size_t count);
 
