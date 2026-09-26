@@ -8,7 +8,9 @@ namespace {
 constexpr int UP_RATE = 16000;
 constexpr int DOWN_RATE = 24000;
 constexpr int UP_BITRATE = 24000;   // speech at 16 kHz: ~11x smaller than PCM, still transcribes cleanly
-constexpr int UP_COMPLEXITY = 3;    // fixed-point SILK stays well inside real time on the S3 at this level
+// Measured on the StickS3 at 240 MHz per 20 ms frame: complexity 0 = 5.9 ms, 1 = 6.4 ms, 2 = 8.0 ms,
+// 3 = 8.6 ms. Level 1 still transcribes word for word through Gemini, at ~25% less CPU than 3.
+constexpr int UP_COMPLEXITY = 1;
 constexpr int MAX_DOWN_SAMPLES = DOWN_RATE * 120 / 1000;  // the longest Opus packet (120 ms)
 
 OpusEncoder* enc = nullptr;

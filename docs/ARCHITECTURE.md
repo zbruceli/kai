@@ -22,11 +22,16 @@ definition is the docstring at the top of `relay/kai_relay/session.py`.
 | Direction | Message | Meaning |
 |---|---|---|
 | → | `hello {device, fw, battery}` | sent on connect |
-| → | `ptt_start`, binary PCM16 16 kHz, `ptt_end` | one utterance (front button held) |
-| ← | binary PCM16 24 kHz | Kai's voice, ≤ 4 KB per frame |
+| → | `ptt_start`, binary Opus (16 kHz, 20 ms packets, ~24 kbit/s), `ptt_end` | one utterance (front button held) |
+| ← | binary Opus (24 kHz, 20 ms packets, ~32 kbit/s) | Kai's voice, ≤ 4 KB per message |
 | ← | `caption {delta}` | the next words Kai says (ASCII) |
 | ← | `card {title, lines[≤5], icon?, mood?}` | tool result for the screen |
 | ← | `interrupted`, `turn_complete`, `state {idle\|thinking}` | turn control |
+
+Binary messages start with a kind byte: `0x02` is followed by `[u16 LE length][Opus packet]` entries
+(`relay/kai_relay/opus.py`, `firmware/src/voice_codec.cpp`). Firmware advertises `"codecs": ["opus"]` in
+`hello`; without it the relay exchanges raw PCM16 (16 kHz up, 24 kHz down), as older firmware and
+`kai-sim` do.
 
 ## One question, end to end
 
@@ -49,6 +54,7 @@ arrives, so the answer isn't lost.
 |---|---|
 | `main.cpp` | Modes `Offline → Idle → Listening → Thinking → Reply`, buttons, Wi-Fi/WebSocket, power |
 | `audio.cpp` | Half-duplex ES8311 codec: 3-buffer mic rotation, 2 MB speaker ring, loudness boost |
+| `voice_codec.cpp` | Opus (libopus 1.6.1, fixed point): mic encode at complexity 1 (~6.4 ms per 20 ms frame at 240 MHz), speech decode (~3.9 ms) |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
 **Power (on battery):** dim after 15 s, deep sleep after 45 s; the CPU runs at 80 MHz and Wi-Fi naps whenever no audio streams, and deep sleep cuts the LCD/audio rail (details in `POWER.md`). Buttons (GPIO 11/12) wake it

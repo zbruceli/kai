@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Opus voice between the Stick and the relay: 16 kHz mic at ~24 kbit/s (was 256) and 24 kHz speech at
+  ~32 kbit/s (was 384), about 11–12x less Wi-Fi airtime. On the Stick at 240 MHz, encoding takes ~6.4 ms
+  and decoding ~3.9 ms per 20 ms frame (measured). Older firmware and `kai-sim` keep raw PCM.
+- Measurement builds log Opus encode/decode time per frame (`enc_us`, `dec_us`).
 - The sleeping z's are drawn as proper Z shapes (they read as "I").
 - README: animated hero of Kai's moods and a gallery of reply screens.
 
