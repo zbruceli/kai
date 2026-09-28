@@ -83,7 +83,8 @@ async def schedule_briefing(ctx: ToolContext, what: str, when: str) -> ToolResul
     "watch_for",
     "Keep an eye on a condition and tell the owner once when it happens, e.g. 'wind at Half Moon Bay under 10 "
     "mph', 'clear skies at sunset at Pescadero'. Checks every few hours until the condition is met or the "
-    "last day passes.",
+    "last day passes. When they name a day or period ('today', 'this weekend', 'by Friday'), pass it as "
+    "until_day too.",
     {
         "condition": {"type": "STRING", "description": "The condition, self-contained, with place and timeframe."},
         "how_often": {"type": "STRING", "description": "Check interval like 'every 3h' (default) or 'every 1h'."},

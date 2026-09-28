@@ -139,3 +139,20 @@ def test_timer_wake_queues_each_update_once(tmp_path):
     session._queue_pending()
     session._queue_pending()
     assert [i.id for i in session._to_deliver] == [b.id]
+
+
+def test_cancel_matches_meaningful_words(tmp_path):
+    hub, sched, hermes = make(tmp_path)
+
+    async def go():
+        await sched.add_reminder("pack the ND filters", datetime.now() + timedelta(hours=3))
+        await sched.add_watch("wind at Half Moon Bay drops below 5 mph today", "every 3h", None)
+        await sched.add_briefing("weather briefing for Half Moon Bay", "every day at 7am")
+        return (await sched.cancel("the wind watch"), await sched.cancel("my ND filters reminder"),
+                await sched.cancel("the fishing briefing"))
+
+    wind, filters, fishing = asyncio.run(go())
+    assert wind == ["watch: wind at Half Moon Bay drops below 5 mph today"]
+    assert filters == ["reminder: pack the ND filters"]
+    assert fishing == []  # 'fishing' isn't in the weather briefing, so nothing is cancelled
+    assert [j["kind"] for j in sched.active_jobs()] == ["briefing"]

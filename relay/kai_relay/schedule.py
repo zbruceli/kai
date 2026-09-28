@@ -221,16 +221,22 @@ class Scheduler:
         }
 
     async def cancel(self, what: str) -> list[str]:
-        """Cancel reminders and jobs whose text, name or id matches `what`. Returns what was cancelled."""
-        q = what.strip().lower()
+        """Cancel reminders and jobs matching the owner's words ("the wind watch", "ND filters").
+        Every meaningful word must appear; a kind word (reminder, briefing, watch) narrows the search."""
+        words = _words(what)
+        kinds = {k for k in ("reminder", "briefing", "watch") if k in words}
+        words -= KIND_WORDS
         gone = []
-        for r in self.pending_reminders():
-            if q in r["text"].lower() or q == str(r["id"]):
-                with self.db:
-                    self.db.execute("UPDATE reminders SET cancelled = 1 WHERE id = ?", (r["id"],))
-                gone.append(f"reminder: {r['text']}")
+        if not kinds or "reminder" in kinds:
+            for r in self.pending_reminders():
+                if words and words <= _words(r["text"]) or what.strip() == str(r["id"]):
+                    with self.db:
+                        self.db.execute("UPDATE reminders SET cancelled = 1 WHERE id = ?", (r["id"],))
+                    gone.append(f"reminder: {r['text']}")
         for job in self.active_jobs():
-            if q in job["description"].lower() or q == job["name"]:
+            if kinds and job["kind"] not in kinds:
+                continue
+            if words and words <= _words(job["description"]) or what.strip() == job["name"]:
                 await self._deactivate(job, "cancelled by the owner")
                 gone.append(f"{job['kind']}: {job['description']}")
         await self._changed()
@@ -263,6 +269,16 @@ class Scheduler:
                     await self.prune()
             except Exception:
                 log.exception("scheduler tick failed")
+
+
+STOP_WORDS = {"the", "a", "an", "my", "for", "at", "in", "on", "of", "to", "and", "that", "this", "about", "please"}
+KIND_WORDS = {"reminder", "reminders", "briefing", "briefings", "brief", "watch", "watches", "alert"}
+
+
+def _words(text: str) -> set[str]:
+    import re
+
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP_WORDS}
 
 
 def _iso(t: datetime) -> str:
