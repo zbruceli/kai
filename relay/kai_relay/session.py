@@ -97,6 +97,8 @@ class KaiSession:
         self._opus_down: opus.Encoder | None = None
         self._model_busy = False  # Gemini is mid-answer
         self._drop_turn = False   # user hushed it with a tap: discard until turn_complete
+        self._acted = False       # an action tool succeeded since the owner last spoke
+        self._confirmed = False   # ...and Kai has already said so: any further turn is a repeat
         self._last_activity = time.monotonic()
 
     # ---- device side -------------------------------------------------------
@@ -174,6 +176,7 @@ class KaiSession:
                 self._opus_up = opus.Decoder(16000)
             self._utterance = ""
             self._card_sent = False
+            self._acted = self._confirmed = False
             self._activity_open = False
             self._pending.clear()
             self._pending_bytes = 0
@@ -328,6 +331,9 @@ class KaiSession:
             await self._send({"type": "state", "state": "thinking"})
             calls = msg.tool_call.function_calls or []
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
+            self._confirmed = False  # a new result deserves to be heard
+            self._acted = self._acted or any(
+                fc.name in tools.ACTION_TOOLS and "error" not in r.data for fc, r in zip(calls, results, strict=True))
             for fc, r in zip(calls, results, strict=True):
                 args = ", ".join(f"{k}={v}" for k, v in (fc.args or {}).items())
                 self._transcript.append(f"[Kai used {fc.name}({args})]")
@@ -351,6 +357,10 @@ class KaiSession:
             self._heard += sc.input_transcription.text
             self._utterance += sc.input_transcription.text
         if sc.model_turn:
+            if not self._model_busy and self._confirmed and not self._delivering and not self._ptt:
+                # Gemini sometimes confirms an action twice (around the call, then again on the result).
+                log.info("[%s] dropping a repeated confirmation", self.device)
+                self._drop_turn = True
             self._model_busy = True
         # While the button is held, or after a hushing tap, anything Kai was still saying is stale.
         mute = self._ptt or self._drop_turn
@@ -381,6 +391,8 @@ class KaiSession:
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
             spoke = self._audio_bytes > 0
+            if spoke and self._acted and not self._delivering:
+                self._confirmed = True
             self._heard = self._caption = ""
             self._audio_bytes = 0
             if self._opus_down:

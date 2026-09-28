@@ -156,3 +156,53 @@ def test_cancel_matches_meaningful_words(tmp_path):
     assert filters == ["reminder: pack the ND filters"]
     assert fishing == []  # 'fishing' isn't in the weather briefing, so nothing is cancelled
     assert [j["kind"] for j in sched.active_jobs()] == ["briefing"]
+
+
+def test_action_confirmed_once():
+    """Gemini sometimes confirms a reminder twice; the second, unprompted turn is dropped."""
+    from types import SimpleNamespace as NS
+
+    from kai_relay import tools
+    from kai_relay.session import KaiSession
+
+    sent, audio = [], []
+    s = KaiSession.__new__(KaiSession)
+    s.device, s.hub, s._opus_down, s._live = "t", None, None, None
+    s._heard = s._caption = s._utterance = ""
+    s._transcript, s._to_deliver, s._delivering, s._tasks = [], [], [], set()
+    s._audio_bytes, s._utterance_id, s._last_place, s._last_tool = 0, 1, None, None
+    s._ptt = s._model_busy = s._drop_turn = s._acted = s._confirmed = False
+    s._card_sent = True
+
+    async def send(obj):
+        sent.append(obj)
+
+    async def send_audio(data, final=False):
+        audio.append(data)
+
+    async def respond(**_):
+        pass
+
+    async def call(name, args, ctx):
+        return tools.ToolResult({"reminder_id": 4}, None)
+
+    s._send, s._send_audio, s.ctx = send, send_audio, None
+    live = NS(send_tool_response=respond)
+    speech = lambda text: NS(go_away=None, tool_call=None, server_content=NS(  # noqa: E731
+        interrupted=False, input_transcription=None, turn_complete=False,
+        model_turn=NS(parts=[NS(inline_data=NS(data=b"\0" * 480))]), output_transcription=NS(text=text)))
+    done = NS(go_away=None, tool_call=None, server_content=NS(
+        interrupted=False, input_transcription=None, turn_complete=True, model_turn=None, output_transcription=None))
+    remind = NS(go_away=None, server_content=None, tool_call=NS(function_calls=[
+        NS(id="1", name="remind", args={"text": "check the pot roast", "in_minutes": 3})]))
+
+    async def run():
+        orig, tools.call = tools.call, call
+        try:
+            for msg in (remind, speech("Got it."), done, speech("And I'll remind you."), done):
+                await s._on_live_message(live, msg)
+        finally:
+            tools.call = orig
+
+    asyncio.run(run())
+    assert len(audio) == 1  # only the first confirmation reached the Stick

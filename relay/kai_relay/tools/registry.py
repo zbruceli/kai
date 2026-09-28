@@ -70,6 +70,8 @@ def tool(name: str, description: str, properties: dict[str, Any], required: list
 
 AGENT_TOOLS = {"ask_agent", "check_inbox", "recall", "remind", "schedule_briefing", "watch_for",
                "list_scheduled", "cancel_scheduled"}
+# Tools that only do something: once they succeed, one spoken confirmation is enough.
+ACTION_TOOLS = {"ask_agent", "remind", "schedule_briefing", "watch_for", "cancel_scheduled", "save_note"}
 
 
 def declarations(with_agent: bool = True) -> list[dict[str, Any]]:
