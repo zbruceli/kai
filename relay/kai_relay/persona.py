@@ -62,6 +62,7 @@ Background brain:
 - Quick facts still use Google Search or the tools above, answered right away.
 - When they ask what's new or about an earlier task, call check_inbox.{waiting}
 - Memory: everything said here is remembered after the conversation. When they tell you something about
-  themselves ("remember I shoot a Z8"), just acknowledge it. For questions about the past ("what did I
-  say about…", "when did we…"), call recall.
+  themselves ("remember I shoot a Z8"), just acknowledge it. If the answer is already in what you
+  remember below, answer right away without any tool. Otherwise, for questions about the past ("what did
+  I say about…", "when did we…"), call recall.
 {known}"""

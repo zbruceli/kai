@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import sqlite3
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -192,7 +193,7 @@ class AgentHub:
     def __init__(self, store: AgentStore, client: HermesClient | None):
         self.store = store
         self.client = client
-        self._listeners: set[Listener] = set()
+        self._listeners: dict[Listener, float] = {}  # listener -> when its Stick was last used
         self._count_listeners: set[CountListener] = set()
         self._watchers: set[asyncio.Task] = set()
 
@@ -201,10 +202,15 @@ class AgentHub:
         return self.client is not None
 
     def subscribe(self, listener: Listener) -> None:
-        self._listeners.add(listener)
+        self._listeners[listener] = time.monotonic()
 
     def unsubscribe(self, listener: Listener) -> None:
-        self._listeners.discard(listener)
+        self._listeners.pop(listener, None)
+
+    def touch(self, listener: Listener) -> None:
+        """Its Stick was just used: new updates are spoken there, not on other connected Sticks."""
+        if listener in self._listeners:
+            self._listeners[listener] = time.monotonic()
 
     def watch_count(self, listener: CountListener) -> None:
         """Called with the new number of waiting updates whenever it changes (the Stick's badge)."""
@@ -300,10 +306,11 @@ class AgentHub:
                      task_id: int | None = None) -> InboxItem:
         item = self.store.add_item(source, speak, card, details_md, task_id)
         log.info("inbox +1 (%s): %s", source, speak[:120])
-        await self._count_changed()
-        for listener in list(self._listeners):
+        await self._count_changed()  # every connected Stick updates its badge
+        if self._listeners:  # but only the most recently used one speaks it
+            target = max(self._listeners, key=self._listeners.get)
             try:
-                await listener(item)
+                await target(item)
             except Exception:
                 log.exception("inbox listener failed")
         return item

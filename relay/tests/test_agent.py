@@ -225,3 +225,20 @@ def test_conversation_handed_to_memory_only_when_owner_spoke():
     session._transcript = ["Owner: remember my camera is a Z8", "[Kai used save_note(text=Z8)]", "Kai: Noted."]
     session._hand_to_memory()
     assert handed == ["Owner: remember my camera is a Z8\n[Kai used save_note(text=Z8)]\nKai: Noted."]
+
+
+def test_update_spoken_on_most_recently_used_stick_only(tmp_path):
+    hub = AgentHub(AgentStore(tmp_path / "a.db"), client=None)
+    heard = {"desk": [], "bag": []}
+
+    def make(name):
+        async def listener(item):
+            heard[name].append(item.speak)
+        return listener
+
+    desk, bag = make("desk"), make("bag")
+    hub.subscribe(desk)
+    hub.subscribe(bag)
+    hub.touch(desk)  # the desk Stick was used last
+    asyncio.run(hub.notify("Sunrise is at 7:07."))
+    assert heard == {"desk": ["Sunrise is at 7:07."], "bag": []}

@@ -150,6 +150,8 @@ class KaiSession:
             self.power.write(self.device, "report", **{k: v for k, v in m.items() if k != "type"})
         elif kind == "ptt_start":
             self._ptt = True
+            if self.hub:
+                self.hub.touch(self._on_inbox_item)
             self._utterance_id += 1
             if self._opus_down:
                 self._opus_down.reset()  # anything Kai was still saying is stale
