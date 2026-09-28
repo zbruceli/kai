@@ -5,27 +5,45 @@
   <br><sub>Kai on a real M5StickS3 (48 × 24 × 15 mm, 20 g), clipped to a lanyard.</sub>
 </p>
 
-A pocket AI pal on an **M5StickS3**: hold the button, ask, and Kai answers out loud with a face and
-little info cards. The Stick stays thin — it streams audio over home Wi-Fi to a **relay on a home server** (Raspberry Pi or any Linux box),
-which runs a **Gemini Live** voice session with Google Search plus Kai's own tools.
+A pocket AI pal on an **M5StickS3**. Hold the button and ask; Kai answers out loud, with a pixel face
+and a small info card. Quick questions get an answer in about two seconds. Bigger jobs ("research…",
+"plan…", "tell me later") go to a background agent, and Kai tells you when they're done.
+
+## How it works: a fast path and a slow path
 
 ```
-M5StickS3 ──── WebSocket (LAN) ────▶ home server: kai-relay  ──▶ Gemini Live (gemini-3.8-live)
- mic 16 kHz PCM  ─────────────────▶   ├─ google_search grounding
- speaker 24 kHz  ◀─────────────────   ├─ notes      → SQLite + Markdown per trip
- face + cards    ◀── JSON ──────────   ├─ tides      → NOAA CO-OPS (nearest station)
- buttons                               ├─ weather    → Open-Meteo forecast + marine
-                                       ├─ sun/light  → Open-Meteo + astral (golden/blue hour)
-                                       └─ parking    → Google Places API (New)
+                      home server
+M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ FAST PATH: answers in ~2 s
+ push-to-talk  Opus │   │          + Google Search, Kai's tools   (tides, weather, light, parking, notes)
+ face + cards       │   │
+                    │   └─ ask_agent ──▶ Hermes Agent ......... SLOW PATH: seconds to minutes
+                    │                     (Docker, locked down)   (research, planning, many searches)
+                    └──── inbox ◀── results, and Hermes's own updates (kai_notify)
 ```
+
+| | **Fast path** | **Slow path** (optional) |
+|---|---|---|
+| Brain | Gemini Live (`gemini-3.8-live`), native voice | [Hermes Agent](https://github.com/nousresearch/hermes-agent) with Gemini Flash |
+| Good for | facts, news, tides, weather, golden hour, parking, notes | research, comparing options, planning, anything needing several searches |
+| Timing | you hear the answer in ~2 s | Kai says "On it"; the answer comes later |
+| Delivery | spoken now, plus a card | spoken the moment it's ready if the Stick is awake; otherwise a badge, read out on "any updates?" |
+
+- **The Stick stays thin.** It streams Opus audio (~24 kbit/s up, ~32 kbit/s down) over home Wi-Fi,
+  draws the face and cards, and deep-sleeps between uses.
+- **The relay** (Python, on any always-on Linux box) bridges the Stick to Gemini Live. It also:
+  - runs Kai's own tools: NOAA tides, Open-Meteo weather and marine, golden and blue hour, Google
+    Places parking, trip notes;
+  - makes sure a card appears even when Gemini skips a tool;
+  - hands slow work to Hermes, and keeps the inbox.
+- **Hermes** runs next to the relay in a pinned Docker container: web search, memory and skills, but no
+  shell, file or browser tools, and nothing acts unattended. It reaches back into Kai through a small MCP
+  server on localhost (`kai_notify` and Kai's data tools).
 
 ## Screens
 
 <p align="center">
   <img src="docs/images/kai-moods.gif" width="480" alt="Kai's moods on the 240x135 screen: idle, listening, thinking, speaking, happy, sleeping, offline">
 </p>
-
-Every answer is spoken and shown: the tool's card, then a live transcript you can scroll.
 
 | Weather, mid-answer | Tides | Saved note |
 |:---:|:---:|:---:|
@@ -35,147 +53,93 @@ Every answer is spoken and shown: the tool's card, then a live transcript you ca
 
 ## What you can ask
 
-| Ask | Tool | Card on screen |
+| Ask | Path | On screen |
 |---|---|---|
-| "Who won the Giants game?" / "Is Sam's Chowder House open?" | Google Search | — |
-| "Start a trip called Pigeon Point October" / "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | `start_trip`, `save_note` | Noted #3 |
-| "When's high tide at Pillar Point tomorrow?" | `get_tides` | the day's highs/lows (or the next four) |
-| "What's the weather in San Mateo?" / "How's the swell at Half Moon Bay this afternoon?" | `get_weather` | temp + sky, hi/lo, rain, wind, waves, sun |
-| "When's golden hour at Pescadero Saturday?" | `get_sun_times` | golden/blue hour, sunset clouds |
-| "Find parking near the Ferry Building" | `find_parking` | 5 closest, by distance |
-| "Research three sunrise spots near Half Moon Bay for this weekend, tell me later" | `ask_agent` → Hermes (optional) | "On it", then the result card when it's done |
-| "Any updates?" | `check_inbox` | the waiting results |
+| "Who won the Giants game?" | fast: Google Search | transcript |
+| "When's high tide at Pillar Point tomorrow?" | fast: `get_tides` | the day's highs and lows |
+| "What's the weather in San Mateo?" | fast: `get_weather` | temperature, high/low, rain, wind, waves |
+| "When's golden hour at Pescadero Saturday?" | fast: `get_sun_times` | golden and blue hour, sunset clouds |
+| "Find parking near the Ferry Building" | fast: `find_parking` | 5 closest |
+| "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | fast: `save_note` | "Noted #3", filed under the current trip |
+| "Research three sunrise spots near Half Moon Bay for this weekend, tell me later" | slow: `ask_agent` → Hermes | "On it", then the result card |
+| "Any updates?" | `check_inbox` | the waiting results; the badge clears |
 
-"Here" / "near me" means `KAI_HOME_*` until the phone companion supplies GPS.
+"Here" and "near me" mean the home location in the relay's `.env` (`KAI_HOME_*`).
 
-**Background brain (optional).** With [Hermes Agent](https://github.com/nousresearch/hermes-agent)
-running next to the relay, Kai hands slow work (research, planning, several searches) to it and says
-"On it". When the result is ready, Kai speaks it if the Stick is awake; otherwise a badge on the face
-shows waiting updates. Hermes runs locked down in Docker, with no shell or file access. See
-[relay/deploy/hermes/README.md](relay/deploy/hermes/README.md).
-
-## Controls
+## Using it
 
 | Button | Action |
 |---|---|
-| **Front** (A) hold | talk; release to send. Pressing while Kai talks interrupts it. Taps < 0.3 s are ignored. |
-| **Side** (B) click | scroll the reply a page (wraps to the top); from the idle face, reopens the last reply |
-| **Side** (B) hold | hush Kai mid-answer; otherwise show the status card (Wi-Fi, relay, battery) |
+| **Front** hold | talk; release to send. Pressing while Kai talks interrupts it. |
+| **Side** click | scroll the reply; from the face, reopen the last reply |
+| **Side** hold | hush Kai mid-answer; otherwise show status (Wi-Fi, relay, battery) |
 
-Every answer is spoken **and** shown: the reply screen has a mini face in the header, the tool's card
-(tides, conditions, ...) and then a live transcript of what Kai says. It follows along while Kai talks,
-jumps back to the top when it's done, and returns to the face 20 seconds later.
-
-Power: after 15 seconds idle Kai falls asleep and the backlight dims. On battery, after 45 seconds the
-Stick deep-sleeps (Wi-Fi and screen off); either button wakes it in a few seconds. Holding the front button to wake
-starts recording immediately, so you can just press and talk: speech is buffered until the relay
-reconnects. On USB it turns the screen off at 45 seconds too but never deep-sleeps, so it still answers
-instantly on a desk. Deep sleep drops Gemini's conversation context.
-
-Expect about 6 days per charge at 20 questions a day (projected; see [docs/POWER.md](docs/POWER.md)).
-The display is an LCD, so the backlight, not pixel colour, is what costs battery; the dark theme is for
-looks. Build with `-DKAI_LIGHT_THEME` for the cream variant.
+- **Badge:** a yellow number in the top-left means updates are waiting.
+- **Sleep:** Kai dims after 15 s. On battery it deep-sleeps after 45 s; either button wakes it, and
+  holding the front button to wake records at once, so you can just press and talk. On USB the screen
+  turns off at 45 s but Kai stays connected.
+- **Battery:** about 6 days per charge at 20 questions a day (projected, see
+  [docs/POWER.md](docs/POWER.md)).
 
 ## Setup
 
-### 1. Relay on a home server
-
-Any always-on Linux box on your LAN works: a Raspberry Pi, a mini PC, a NAS. No sudo needed.
-
+**1. Relay** on an always-on Linux box on your LAN (Raspberry Pi, mini PC, NAS); no sudo needed.
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh      # once
+curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/zbruceli/kai ~/kai && cd ~/kai/relay
 cp .env.example .env && chmod 600 .env && nano .env   # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
-uv sync --frozen
-uv run kai-relay                                      # try it; prints ws://<server-ip>:8765/ws
+uv sync --frozen && uv run kai-relay                  # prints ws://<server-ip>:8765/ws
 ```
+- **Keys:** get a Gemini key from [AI Studio](https://aistudio.google.com/apikey). Parking also needs a
+  Maps key with Places API (New); everything else works without it.
+- **Run at boot:** copy `deploy/kai-relay.service` to `~/.config/systemd/user/`, set its `TZ=`, then
+  `loginctl enable-linger "$USER"` and `systemctl --user enable --now kai-relay`.
+- **Logs:** `journalctl --user -u kai-relay -f` shows the transcript and tool calls.
+- **Update:** `git pull && uv sync --frozen && systemctl --user restart kai-relay`.
+- **Fixed IP:** give the server a DHCP reservation, because the Stick connects to its IP.
 
-Run it at boot as a user service (edit `TZ=` in the file first if you're not on Pacific time; many servers
-run in UTC, and "today"/"tomorrow" follow it):
+**2. Slow path (optional):** Hermes in Docker. Follow [relay/deploy/hermes/README.md](relay/deploy/hermes/README.md):
+`docker compose up -d`, a few secrets, then `./configure.sh`. Without it, Kai simply has no `ask_agent`.
 
+**3. Stick.**
 ```bash
-mkdir -p ~/.config/systemd/user && cp deploy/kai-relay.service ~/.config/systemd/user/
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload && systemctl --user enable --now kai-relay
-journalctl --user -u kai-relay -f                     # live transcript and tool calls
+cd firmware && cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, KAI_DEVICE_TOKEN
+pio run -t upload
 ```
+If the port isn't found, hold the side button ~2 s until the green LED blinks (download mode). Builds
+embed your Wi-Fi password and token, so releases are source only; never share a built `firmware.bin`.
 
-To update later: `cd ~/kai && git pull && cd relay && uv sync --frozen && systemctl --user restart kai-relay`.
+**Without a Stick:** `uv sync --extra sim && uv run kai-sim --host <server-ip>` talks to the relay through
+the Mac's mic and speakers.
 
-Give the server a DHCP reservation in your router so its IP never changes; the Stick connects to it.
+**Tests:** `cd relay && uv run pytest` (offline). Add `-m network -s` to hit NOAA and Open-Meteo for real.
 
-Keys: Gemini from [AI Studio](https://aistudio.google.com/apikey). Parking needs a Maps key with
-**Places API (New)** enabled; without it everything else still works.
-
-### 2. Try it without the Stick
-
-From the Mac, with its mic and speakers:
-
-```bash
-cd relay && uv sync --extra sim
-uv run kai-sim --host <server-ip> --token <KAI_DEVICE_TOKEN>
-```
-
-### 3. Flash the Stick
-
-```bash
-cd firmware
-cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, KAI_DEVICE_TOKEN
-pio run -t upload && pio device monitor
-```
-
-If upload can't find the port: hold the side reset button ~2 s until the green LED blinks (download mode).
-`RELAY_HOST` can be the Pi's IP or its `.local` name (resolved over mDNS).
-
-### Tests
-
-```bash
-cd relay
-uv run pytest               # offline unit tests
-uv run pytest -m network -s # hits NOAA / Open-Meteo for real, prints the cards
-```
-
-## Docs
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit, the wire protocol, adding a tool
-- [docs/POWER.md](docs/POWER.md): power budget, battery life, and how to measure it
-- [CHANGELOG.md](CHANGELOG.md)
-
-Releases are source only. The firmware compiles your Wi-Fi password and device token in from
-`secrets.h`, so build it yourself; never share a built `firmware.bin`.
-
-## Layout
+## Repo map
 
 ```
-firmware/            PlatformIO, Arduino-ESP32 3.x, M5Unified
-  src/main.cpp       modes, buttons, Wi-Fi + WebSocket
-  src/audio.*        half-duplex codec: mic streaming, PSRAM speaker ring buffer
-  src/face.*         face expressions + info cards (240x135)
-relay/
-  kai_relay/session.py   device <-> Gemini Live bridge (wire protocol documented at the top)
-  kai_relay/persona.py   Kai's system prompt
-  kai_relay/backstop.py  runs the right tool itself when Gemini answers a tide/weather/light/parking
-                         question without one, so a card always appears
-  kai_relay/tools/       one file per capability; add a tool with the @tool decorator
-  kai_relay/agent.py     background tasks and the inbox (the hybrid with Hermes)
-  kai_relay/hermes.py    client for Hermes's API server
-  kai_relay/mcp_server.py  the Kai MCP server Hermes calls back into
-  deploy/                user-level systemd unit for the home server
-  deploy/hermes/         pinned, locked-down Hermes (Docker compose, configure.sh, SOUL.md)
+firmware/src/   main.cpp (modes, buttons, Wi-Fi, sleep) · audio.* (mic, speaker) · voice_codec.* (Opus) · face.* (sprite, cards)
+relay/kai_relay/
+  session.py    Stick <-> Gemini Live bridge; wire protocol at the top
+  tools/        fast-path tools, one file each (@tool decorator)
+  backstop.py   runs the tool itself when Gemini answers without one, so a card always appears
+  agent.py      slow path: hand-off to Hermes, the inbox, the badge
+  hermes.py     Hermes API client
+  mcp_server.py Kai MCP server that Hermes calls back into
+relay/deploy/   systemd unit · hermes/ (pinned compose, configure.sh, SOUL.md)
 ```
+
+More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (protocol, tools, security),
+[docs/POWER.md](docs/POWER.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Roadmap
 
-- [x] M0–M3: push-to-talk voice, search, notes, tides, conditions, light, parking, cards
-- [x] Deep sleep between uses, press-and-talk from sleep
-- [ ] M4: IMU gestures (shake = cancel, lift = wake), OTA updates, battery measurements
-- [x] Background brain (phase 1): hand-off to a local Hermes Agent, inbox with badge, spoken results
-- [ ] Background brain phase 2: memory across sessions (transcripts to Hermes, profile brief)
-- [ ] Background brain phase 3: reminders, briefings and watches with timer wakes
-- [ ] Session resumption so context survives Gemini's ~10 min connection limit
-- [ ] v2: phone companion as transport + GPS ("near me" for real, location-tagged notes), relay on Cloud Run
-      with per-device tokens
-- [ ] Optional M5 Unit CAM on the Grove port for "what am I looking at?"
+- [x] Voice, search, tides, weather, light, parking, notes, with cards
+- [x] Deep sleep with press-and-talk from sleep; Opus audio; power savings
+- [x] Slow path, phase 1: hand-off to Hermes, inbox with badge, results spoken when ready
+- [ ] Slow path, phase 2: memory across sessions (conversations to Hermes, a profile brief for Kai)
+- [ ] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
+- [ ] Remote access: phone as a BLE bridge (GPS for "near me"), or a relay reachable away from home
+- [ ] IMU gestures (lift to wake, shake to hush), OTA updates
 
 ## License
 
