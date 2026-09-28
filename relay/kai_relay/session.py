@@ -14,6 +14,7 @@ Relay -> device
     text   {"type": "caption", "delta": str} next words of what Kai is saying (ASCII, for the screen)
     text   {"type": "interrupted"}           drop any queued speech
     text   {"type": "turn_complete"}
+    text   {"type": "inbox", "count": int}   updates waiting from the background brain (badge)
     binary Kai's speech: 0x02 + Opus bundle at 24 kHz if the device asked for opus, else raw PCM16
            mono 24 kHz; <= DEVICE_FRAME bytes per message
 """
@@ -34,6 +35,7 @@ from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
 
 from . import backstop, opus, tools
+from .agent import InboxItem
 from .power import PowerLog, sleep_estimate_ma
 from .config import Settings
 from .persona import system_prompt
@@ -64,6 +66,9 @@ class KaiSession:
         self.settings = settings
         self.device = "?"
         self.power = PowerLog(settings.data_dir)
+        self.hub = ctx.agent if ctx.agent and ctx.agent.enabled else None
+        self._to_deliver: list[InboxItem] = []  # background results to speak when Kai is free
+        self._delivering: list[int] = []        # inbox ids injected into the current Gemini turn
 
         self._live: Any = None  # google.genai AsyncSession
         self._stack: AsyncExitStack | None = None
@@ -110,6 +115,8 @@ class KaiSession:
         except ConnectionClosed:
             pass
         finally:
+            if self.hub:
+                self.hub.unsubscribe(self._on_inbox_item)
             idle.cancel()
             for task in self._tasks:
                 task.cancel()
@@ -127,6 +134,9 @@ class KaiSession:
             # Thinking when it replays speech captured while waking from deep sleep.
             log.info("[%s] hello fw=%s battery=%s%% audio=%s", self.device, m.get("fw"), m.get("battery"),
                      "opus" if self._opus_down else "pcm")
+            if self.hub:
+                self.hub.subscribe(self._on_inbox_item)
+                await self._send_inbox_count()
             if isinstance(m.get("sleep"), dict):
                 sl = m["sleep"]
                 self.power.write(self.device, "sleep", **sl)
@@ -221,9 +231,10 @@ class KaiSession:
     def _live_config(self) -> types.LiveConnectConfig:
         return types.LiveConnectConfig.model_validate({
             "response_modalities": ["AUDIO"],
-            "system_instruction": system_prompt(self.settings, datetime.now()),
+            "system_instruction": system_prompt(self.settings, datetime.now(),
+                                                self.hub.count() if self.hub else None),
             "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": self.settings.voice}}},
-            "tools": [{"google_search": {}}, {"function_declarations": tools.declarations()}],
+            "tools": [{"google_search": {}}, {"function_declarations": tools.declarations(self.hub is not None)}],
             "input_audio_transcription": {},
             "output_audio_transcription": {},
             # Push-to-talk: the button marks turns, not Gemini's voice activity detection.
@@ -334,11 +345,51 @@ class KaiSession:
                 task = asyncio.create_task(self._backstop_card(self._utterance, self._utterance_id))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
+            spoke = self._audio_bytes > 0
             self._heard = self._caption = ""
             self._audio_bytes = 0
             if self._opus_down:
                 await self._send_audio(b"", final=True)  # the last partial Opus frame
             await self._send({"type": "turn_complete"})
+            if self._delivering and spoke:
+                self.hub.mark_delivered(self._delivering)
+                self._delivering = []
+                await self._send_inbox_count()
+            await self._deliver_next()
+
+    # ---- background brain ---------------------------------------------------
+
+    async def _send_inbox_count(self) -> None:
+        await self._send({"type": "inbox", "count": self.hub.count()})
+
+    async def _on_inbox_item(self, item: InboxItem) -> None:
+        await self._send_inbox_count()
+        self._to_deliver.append(item)
+        await self._deliver_next()
+
+    async def _deliver_next(self) -> None:
+        """Speak one waiting result, but never over the owner or over Kai's own answer."""
+        if not self._to_deliver or self._ptt or self._model_busy or self._delivering:
+            return
+        item = self._to_deliver.pop(0)
+        self._delivering = [item.id]
+        self._card_sent = True  # this turn brings its own card; no backstop
+        self._utterance = ""
+        if item.card:
+            await self._send_card(item.card)
+        try:
+            await self._ensure_live()
+            await self._live.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=(
+                    "[Background result for the owner, not something they just said. Tell them now in one or two "
+                    f"short spoken sentences, as your own news: {item.speak}]"))]),
+                turn_complete=True,
+            )
+            self._last_activity = time.monotonic()
+            log.info("[%s] delivering update %s", self.device, item.id)
+        except Exception:
+            log.exception("[%s] couldn't deliver update %s; it stays in the inbox", self.device, item.id)
+            self._delivering = []
 
     async def _send_card(self, card: dict) -> None:
         self._card_sent = True

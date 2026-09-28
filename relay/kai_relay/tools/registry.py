@@ -36,6 +36,7 @@ class ToolContext:
     settings: Settings
     http: httpx.AsyncClient
     notes: Any  # NotesStore; typed loosely to avoid an import cycle
+    agent: Any = None  # AgentHub, when Hermes is configured
     cache: dict[str, Any] = field(default_factory=dict)
 
 
@@ -66,10 +67,15 @@ def tool(name: str, description: str, properties: dict[str, Any], required: list
     return decorator
 
 
-def declarations() -> list[dict[str, Any]]:
+AGENT_TOOLS = {"ask_agent", "check_inbox"}
+
+
+def declarations(with_agent: bool = True) -> list[dict[str, Any]]:
+    """Tool declarations for Gemini; the background-brain tools only when Hermes is configured."""
     return [
         {"name": t.name, "description": t.description, "parameters": t.parameters}
         for t in _REGISTRY.values()
+        if with_agent or t.name not in AGENT_TOOLS
     ]
 
 

@@ -7,8 +7,10 @@ import httpx
 from google import genai
 from websockets.asyncio.server import ServerConnection, serve
 
-from . import tools
+from . import mcp_server, tools
+from .agent import AgentHub, AgentStore
 from .config import load_settings
+from .hermes import HermesClient
 from .session import KaiSession
 
 log = logging.getLogger("kai")
@@ -30,7 +32,20 @@ async def run() -> None:
     expected_auth = f"Bearer {settings.device_token}"
 
     async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "kai-relay/0.9"}) as http:
-        ctx = tools.ToolContext(settings=settings, http=http, notes=notes)
+        hermes = None
+        if settings.hermes_url and settings.hermes_api_key:
+            hermes = HermesClient(settings.hermes_url, settings.hermes_api_key, http)
+        hub = AgentHub(AgentStore(settings.data_dir / "agent.db"), hermes)
+        ctx = tools.ToolContext(settings=settings, http=http, notes=notes, agent=hub)
+        background: set[asyncio.Task] = set()
+        if hermes:
+            await hub.start()
+            log.info("background brain: Hermes at %s (%s)", settings.hermes_url,
+                     "healthy" if await hermes.health() else "NOT responding yet")
+            if settings.mcp_token:
+                background.add(asyncio.create_task(mcp_server.serve(ctx, hub, settings.mcp_port, settings.mcp_token)))
+            else:
+                log.warning("KAI_MCP_TOKEN not set: Hermes can't reach back into Kai (kai_notify, data tools)")
 
         async def handler(ws: ServerConnection) -> None:
             if ws.request.path != "/ws":

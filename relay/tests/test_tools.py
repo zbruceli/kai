@@ -41,9 +41,10 @@ def test_live_config_validates():
 
     session = KaiSession.__new__(KaiSession)
     session.settings = SETTINGS
+    session.hub = None
     cfg = session._live_config()
     assert cfg.realtime_input_config.automatic_activity_detection.disabled is True
-    assert len(cfg.tools[1].function_declarations) == len(tools.declarations())
+    assert len(cfg.tools[1].function_declarations) == len(tools.declarations(with_agent=False))  # no Hermes
 
 
 def test_card_truncates():

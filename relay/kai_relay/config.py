@@ -21,6 +21,12 @@ class Settings:
     data_dir: Path
     notes_dir: Path
     idle_close_s: int
+    # The background brain (Hermes) and the Kai MCP server it calls back into. All optional: without them
+    # the relay behaves as before.
+    hermes_url: str | None = None
+    hermes_api_key: str | None = None
+    mcp_port: int = 8766
+    mcp_token: str | None = None
 
     @property
     def imperial(self) -> bool:
@@ -63,4 +69,8 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         notes_dir=Path(env.get("KAI_NOTES_DIR", str(data_dir / "notes"))).expanduser(),
         idle_close_s=int(env.get("KAI_IDLE_CLOSE_S", "300")),
+        hermes_url=env.get("HERMES_URL") or None,
+        hermes_api_key=env.get("HERMES_API_KEY") or None,
+        mcp_port=int(env.get("KAI_MCP_PORT", "8766")),
+        mcp_token=env.get("KAI_MCP_TOKEN") or None,
     )

@@ -3,7 +3,7 @@ from datetime import datetime
 from .config import Settings
 
 
-def system_prompt(settings: Settings, now: datetime) -> str:
+def system_prompt(settings: Settings, now: datetime, pending_updates: int | None = None) -> str:
     if settings.home_lat is not None:
         home = f"{settings.home_name} ({settings.home_lat:.4f}, {settings.home_lon:.4f})"
     else:
@@ -41,4 +41,19 @@ Tools:
 - Weather anywhere: use get_weather, and lead with the temperature. Fishing: get_tides plus get_weather.
 - Photography: use get_sun_times for golden hour, blue hour, sunrise and sunset, plus cloud cover.
 - Parking: use find_parking with the place they name.
+{_agent_section(pending_updates)}"""
+
+
+def _agent_section(pending: int | None) -> str:
+    if pending is None:  # no background brain configured
+        return ""
+    waiting = (f"\n- {pending} update(s) are waiting. After answering what they ask, mention it in a few words and "
+               "offer to read them (check_inbox)." if pending else "")
+    return f"""
+Background brain:
+- For anything that needs research, comparing options, planning or several searches ("look into",
+  "research", "find me", "plan", "later"), call ask_agent with a self-contained task, say you're on it,
+  and don't answer it yourself. Its answer arrives later and you'll be told to pass it on.
+- Quick facts still use Google Search or the tools above, answered right away.
+- When they ask what's new or about an earlier task, call check_inbox.{waiting}
 """

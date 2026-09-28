@@ -12,6 +12,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "av>=14",          # bundled libopus for the Stick's Opus audio
     "numpy>=1.26",
+    "mcp==2.0.0",       # Kai MCP server for Hermes (same pin as Hermes itself)
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
