@@ -88,6 +88,7 @@ Expr expr = Expr::Offline;
 float level = 0, shownLevel = 0;
 String statusText;
 int battery = -1;
+int inbox = 0;  // updates waiting from the background brain
 
 struct Line {
   String text;
@@ -223,6 +224,14 @@ void drawFace(uint32_t now, uint32_t tick, bool newTick) {
     canvas.setTextDatum(top_right);
     canvas.setTextColor(battery <= 15 ? T.tongue : T.textSoft);
     canvas.drawString(String(battery) + "%", W - 3, 3);
+  }
+  // Inbox badge: a small accent pill with the count, in the free top-left corner.
+  if (inbox > 0) {
+    canvas.fillSmoothRoundRect(4, 3, inbox > 9 ? 22 : 16, 14, 7, T.accent);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextDatum(middle_center);
+    canvas.setTextColor(T.bg);
+    canvas.drawString(inbox > 9 ? String("9+") : String(inbox), inbox > 9 ? 15 : 12, 10);
   }
   // Ground
   for (int x = 2; x < W / S - 2; x += 2) canvas.fillRect(x * S, 23 * S, S, S, T.iconOff);
@@ -404,6 +413,11 @@ void setStatusText(const String& text) {
   dirty |= text != statusText;
   statusText = text;
 }
+void setInbox(int count) {
+  dirty |= count != inbox;
+  inbox = count;
+}
+
 void setBattery(int percent) {
   dirty |= percent != battery;
   battery = percent;

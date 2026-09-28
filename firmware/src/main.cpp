@@ -24,7 +24,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.9.0";
+static constexpr const char* FW_VERSION = "0.10.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -385,6 +385,8 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     if (hushed || mode == Mode::Listening) return;
     face::appendReplyText(doc["delta"] | "");
     replyActivity();
+  } else if (!strcmp(type, "inbox")) {
+    face::setInbox(doc["count"] | 0);
   } else if (!strcmp(type, "interrupted")) {
     audio::clearPlayback();
     voice::dropQueued();

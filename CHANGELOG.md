@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased: background brain (phase 1)
+
+- **Hybrid agent:** Kai's voice (Gemini Live) stays the fast path and hands slow work to a local
+  **Hermes Agent** with `ask_agent` ("On it"). Results come back as a spoken answer plus card if the Stick
+  is awake, or wait in an inbox (a badge on the face). `check_inbox` reads them.
+- **Kai MCP server** in the relay (localhost, token), so Hermes can call `kai_notify` and reuse Kai's
+  tide, weather, light and notes tools.
+- **Hermes deployment** in `relay/deploy/hermes/`: pinned Docker image (tag and digest) that sees only
+  its data folder, with no shell, file, code, browser or computer-use tools, manual approvals and no
+  unattended actions; `configure.sh` applies and checks it.
+- **Tested end to end** on the home server: a spoken research request was handed off, Hermes answered in
+  ~45 s with web research, and Kai spoke the result on its own. Hermes also called Kai's `get_tides` and
+  `kai_notify`. Red-team requests for files and SSH keys had no tool to use.
+- Firmware 0.10.0: inbox badge.
+- All optional: without the Hermes settings, the relay behaves as before.
+
 ## v0.9.0: Opus voice
 
 **Upgrade order:** update the relay first (`git pull && uv sync --frozen`, which adds PyAV, and restart it),

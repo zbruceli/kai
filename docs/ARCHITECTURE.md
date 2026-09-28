@@ -27,6 +27,7 @@ definition is the docstring at the top of `relay/kai_relay/session.py`.
 | ← | `caption {delta}` | the next words Kai says (ASCII) |
 | ← | `card {title, lines[≤5], icon?, mood?}` | tool result for the screen |
 | ← | `interrupted`, `turn_complete`, `state {idle\|thinking}` | turn control |
+| ← | `inbox {count}` | updates waiting from the background brain (badge) |
 
 Binary messages start with a kind byte: `0x02` is followed by `[u16 LE length][Opus packet]` entries
 (`relay/kai_relay/opus.py`, `firmware/src/voice_codec.cpp`). Firmware advertises `"codecs": ["opus"]` in
@@ -82,6 +83,38 @@ not the Philippines. Days are passed as spoken ("tomorrow", "saturday") and reso
 
 **Adding a tool:** write the function, give it a `card(..., icon=...)`, import the module in
 `tools/__init__.py`, and name it in `persona.py`.
+
+## Background brain (optional: Hermes)
+
+Gemini Live is the **fast path**: it answers in under 2 s with the tools above. For slow work it calls
+`ask_agent`, and the relay hands the task to **Hermes Agent**, the **slow path**, running on the same
+host:
+
+```
+Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
+              │ ask_agent ──▶ Hermes API :8642 (POST /v1/runs, polled)   ─┐
+              │ ◀── kai_notify, get_tides … ◀── Kai MCP :8766 (localhost) ◀┘ Hermes (Docker, locked down)
+              └─ inbox (SQLite): spoken now if a Stick is connected, else a badge
+```
+
+- **`agent.py`:**
+  - starts runs with a voice-shaped prompt: reply JSON with `speak` (≤ 2 sentences), `card` and
+    `details_md`;
+  - follows each run, resuming after restarts;
+  - turns results into inbox items.
+- **Delivery:**
+  - the session sends `{"type": "inbox", "count": n}` for the badge;
+  - it speaks a result by injecting it into Gemini Live, only when the owner isn't talking and Kai
+    isn't mid-answer;
+  - it marks the item delivered once Kai has said it.
+- **`check_inbox`** reads waiting items on request. The persona mentions waiting updates at the start of
+  a session.
+- **Hermes's lock-down** (`relay/deploy/hermes/`):
+  - pinned image (tag and digest), with only its data folder mounted;
+  - no terminal, file, code, browser or computer-use tools;
+  - manual approvals, and no unattended actions;
+  - self-written skills need approval;
+  - API and MCP both on localhost, behind tokens.
 
 ## Security
 

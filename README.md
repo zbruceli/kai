@@ -43,8 +43,16 @@ Every answer is spoken and shown: the tool's card, then a live transcript you ca
 | "What's the weather in San Mateo?" / "How's the swell at Half Moon Bay this afternoon?" | `get_weather` | temp + sky, hi/lo, rain, wind, waves, sun |
 | "When's golden hour at Pescadero Saturday?" | `get_sun_times` | golden/blue hour, sunset clouds |
 | "Find parking near the Ferry Building" | `find_parking` | 5 closest, by distance |
+| "Research three sunrise spots near Half Moon Bay for this weekend, tell me later" | `ask_agent` → Hermes (optional) | "On it", then the result card when it's done |
+| "Any updates?" | `check_inbox` | the waiting results |
 
 "Here" / "near me" means `KAI_HOME_*` until the phone companion supplies GPS.
+
+**Background brain (optional).** With [Hermes Agent](https://github.com/nousresearch/hermes-agent)
+running next to the relay, Kai hands slow work (research, planning, several searches) to it and says
+"On it". When the result is ready, Kai speaks it if the Stick is awake; otherwise a badge on the face
+shows waiting updates. Hermes runs locked down in Docker, with no shell or file access. See
+[relay/deploy/hermes/README.md](relay/deploy/hermes/README.md).
 
 ## Controls
 
@@ -149,7 +157,11 @@ relay/
   kai_relay/backstop.py  runs the right tool itself when Gemini answers a tide/weather/light/parking
                          question without one, so a card always appears
   kai_relay/tools/       one file per capability; add a tool with the @tool decorator
+  kai_relay/agent.py     background tasks and the inbox (the hybrid with Hermes)
+  kai_relay/hermes.py    client for Hermes's API server
+  kai_relay/mcp_server.py  the Kai MCP server Hermes calls back into
   deploy/                user-level systemd unit for the home server
+  deploy/hermes/         pinned, locked-down Hermes (Docker compose, configure.sh, SOUL.md)
 ```
 
 ## Roadmap
@@ -157,6 +169,9 @@ relay/
 - [x] M0–M3: push-to-talk voice, search, notes, tides, conditions, light, parking, cards
 - [x] Deep sleep between uses, press-and-talk from sleep
 - [ ] M4: IMU gestures (shake = cancel, lift = wake), OTA updates, battery measurements
+- [x] Background brain (phase 1): hand-off to a local Hermes Agent, inbox with badge, spoken results
+- [ ] Background brain phase 2: memory across sessions (transcripts to Hermes, profile brief)
+- [ ] Background brain phase 3: reminders, briefings and watches with timer wakes
 - [ ] Session resumption so context survives Gemini's ~10 min connection limit
 - [ ] v2: phone companion as transport + GPS ("near me" for real, location-tagged notes), relay on Cloud Run
       with per-device tokens

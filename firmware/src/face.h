@@ -33,6 +33,7 @@ void setExpr(Expr e);
 void setLevel(float level);              // drives the sound waves while listening and the mouth while speaking
 void setStatusText(const String& text);  // small hint under Kai (e.g. "connecting wifi")
 void setBattery(int percent);
+void setInbox(int count);                // badge: updates waiting from the background brain
 
 // Reply view
 void clearReply();
