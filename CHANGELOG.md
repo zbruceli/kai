@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Better fast/slow routing.** Kai now decides by what a good answer needs, not by trigger words:
+  - explicit requests ("research", "tell me later") always hand off, and Kai never promises to report
+    back without actually starting the task;
+  - for thin or local "what's new" answers, Kai answers and then offers "Want me to dig into it?";
+  - "set a timer", "alarm" and "wake me in…" reach `remind`, and `recall` no longer claims "remind me".
+- **Routing eval** (`relay/evals/routing.py`): replays requests through Gemini Live with the relay's
+  prompt and tools, and scores the path it picks. On 104 cases × 3 runs: 90% → 94%. Dig-deeper cases
+  went from 56% to 87%, explicit hand-offs from 94% to 100%, and false hand-offs from 3 to 0.
+
 ## v0.11.0: background brain
 
 Kai gets a slow path next to its fast voice: a local, locked-down Hermes Agent that does long tasks,

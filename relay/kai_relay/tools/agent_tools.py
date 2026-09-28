@@ -12,10 +12,10 @@ def _hub(ctx: ToolContext):
 
 @tool(
     "ask_agent",
-    "Hand a task to Kai's background brain, which can research the web, compare options and plan, taking "
-    "from seconds to minutes. Use it when the owner says 'look into', 'research', 'find me', 'plan', 'later', "
-    "or when a good answer needs several searches or steps. It returns immediately; the answer arrives later "
-    "as an update. Pass a self-contained task: include the place, dates and what to report.",
+    "Hand a task to Kai's background brain, which researches the web, weighs several sources and constraints, "
+    "compares options and plans, usually within a minute. Use it when a good answer needs more than one "
+    "lookup, or the owner asks for depth or says yes to digging deeper. It returns immediately; the answer "
+    "arrives later as an update. Pass a self-contained task: include the place, dates and what to report.",
     {"task": {"type": "STRING", "description": "The full task in plain words, self-contained."}},
     required=["task"],
 )
@@ -55,7 +55,8 @@ async def check_inbox(ctx: ToolContext) -> ToolResult:
 @tool(
     "recall",
     "Ask Kai's long-term memory about the owner's past: earlier conversations, plans, places, gear, what they "
-    "said or asked before. Use it for 'what did I…', 'when did we…', 'remind me what…'. Not for trip notes "
+    "said or asked before. Use it for 'what did I say about…', 'when did we…', 'what was that place…'. Not for "
+    "setting reminders (use remind), trip notes "
     "(use list_notes) or current facts (use search or the data tools).",
     {"question": {"type": "STRING", "description": "The question about the past, self-contained."}},
     required=["question"],

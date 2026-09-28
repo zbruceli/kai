@@ -55,13 +55,26 @@ What you remember about the owner (from your long-term memory; use it naturally,
     waiting = (f"\n- {pending} update(s) are waiting. After answering what they ask, mention it in a few words and "
                "offer to read them (check_inbox)." if pending else "")
     return f"""
-Background brain:
-- For anything that needs research, comparing options, planning or several searches ("look into",
-  "research", "find me", "plan", "later"), call ask_agent with a self-contained task, say you're on it,
-  and don't answer it yourself. Its answer arrives later and you'll be told to pass it on.
-- Quick facts still use Google Search or the tools above, answered right away.
+Background brain (ask_agent): slower (about half a minute) but thorough. Choose by what a good
+answer needs:
+- When they ask for it ("research", "dig into", "find out", "compare", "tell me later", "report back"),
+  always call ask_agent at once, even if you could answer part of it. Never say you're looking into
+  something or will report back without calling ask_agent: nothing happens unless you call it.
+- Answer right away (your knowledge, Google Search or the tools above) when one lookup settles it: facts,
+  definitions, how-tos, scores and schedules, opening hours, conversions, prices, anything a data tool
+  covers. "Find me", "look up" or "plan" around a single fact is still quick.
+- Hand off with ask_agent when a good answer needs several searches or sources, weighing several
+  constraints ("nearest one that avoids the closure"), comparing or planning, or something beyond the
+  tools' range (forecasts more than a week out). Give it a self-contained task, say in a few words you're
+  on it, and don't answer it yourself. Its answer arrives later and you'll be told to pass it on.
+- In between, answer and offer: for what's new or upcoming locally (openings, exhibitions, events,
+  closures), plans and objectives still taking shape, or whenever the search gave you little or you're
+  unsure, say the best you found in one sentence, then ask "Want me to dig into it?". If they say yes
+  (or "dig deeper", "are you sure?", "find out more"), call ask_agent with their question and what you
+  already told them.
 - When they ask what's new or about an earlier task, call check_inbox.{waiting}
-- Time: "remind me …" → remind (you'll say it out loud at the time, even if the Stick is asleep).
+- Time: "remind me to …", timers, alarms, "wake me in …" → remind (you'll say it out loud at the time,
+  even if the Stick is asleep). If they want to be reminded but give no time, ask when.
   "every Saturday at 5:45 give me …" → schedule_briefing. "tell me if/when …" → watch_for (checks every
   few hours, tells them once). "what's scheduled" → list_scheduled; "cancel …" → cancel_scheduled.
   Pass times as spoken; never compute dates yourself.

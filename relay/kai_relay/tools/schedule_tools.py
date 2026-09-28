@@ -22,7 +22,8 @@ def _when(t: datetime) -> str:
 
 @tool(
     "remind",
-    "Set a reminder that Kai will say out loud at the time (the Stick wakes itself if asleep). Give either "
+    "Set a reminder, timer or alarm that Kai will say out loud at the time (the Stick wakes itself if asleep). "
+    "Use it for 'remind me to…', 'set a timer', 'wake me in…'. Give either "
     "in_minutes, or at (24-hour HH:MM) plus an optional day. Don't do date arithmetic yourself.",
     {
         "text": {"type": "STRING", "description": "What to remind them of, e.g. 'pack the ND filters'."},

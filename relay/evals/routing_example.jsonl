@@ -1,0 +1,30 @@
+// Synthetic routing cases: tool coverage, description collisions, false hand-off traps, follow-ups.
+// expect: any listed label passes. fast | offer | clarify | slow | tool:<name>
+{"id": "s01", "say": "Remind me what I said about Pigeon Point last month.", "expect": ["tool:recall"], "note": "collision: recall vs remind"}
+{"id": "s02", "say": "What did I say about Pigeon Point last month?", "expect": ["tool:recall"]}
+{"id": "s03", "say": "Remind me at 5:30 to pack the ND filters.", "expect": ["tool:remind"]}
+{"id": "s04", "say": "Set an alarm for 6 tomorrow morning.", "expect": ["tool:remind"], "note": "remind's description has no 'alarm'"}
+{"id": "s05", "say": "Wake me up in 20 minutes.", "expect": ["tool:remind"]}
+{"id": "s06", "say": "Every Saturday at 5:45 give me a fishing brief for Pillar Point.", "expect": ["tool:schedule_briefing"]}
+{"id": "s07", "say": "Tell me if the wind at Half Moon Bay drops under 10 mph this weekend.", "expect": ["tool:watch_for"]}
+{"id": "s08", "say": "What do I have scheduled?", "expect": ["tool:list_scheduled"]}
+{"id": "s09", "say": "Cancel the wind watch.", "expect": ["tool:cancel_scheduled"]}
+{"id": "s10", "say": "Note: f/11, a quarter second, 10-stop ND at the lighthouse.", "expect": ["tool:save_note"]}
+{"id": "s11", "say": "Find parking near the Ferry Building.", "expect": ["tool:find_parking"]}
+{"id": "s12", "say": "When's golden hour at Pescadero on Saturday?", "expect": ["tool:get_sun_times"]}
+{"id": "s13", "say": "Compare the Sony 200-600 and the Nikon 180-600 for bird photography.", "expect": ["slow", "offer"], "note": "compare: several sources"}
+{"id": "s14", "say": "Plan a two-day photo trip to Big Sur next month.", "expect": ["slow"]}
+{"id": "s15", "say": "What new photo exhibitions are opening in San Francisco this month?", "expect": ["offer", "slow"], "note": "event-level local info"}
+{"id": "s16", "say": "Which beach near Pescadero has the best sunset light and a low tide on Saturday evening?", "expect": ["slow", "tool:get_sun_times", "tool:get_tides"], "note": "several constraints"}
+{"id": "s17", "say": "What will the weather be in Half Moon Bay three weeks from now?", "expect": ["slow", "offer", "clarify"], "note": "beyond get_weather's range"}
+{"id": "s18", "say": "Find me the capital of Australia.", "expect": ["fast"], "note": "false hand-off trap: 'find me'"}
+{"id": "s19", "say": "Look up how many ounces are in a cup.", "expect": ["fast"], "note": "false hand-off trap: 'look up'"}
+{"id": "s20", "say": "What's the plan for the SpaceX launch today?", "expect": ["fast"], "note": "false hand-off trap: 'plan'"}
+{"id": "s21", "say": "What's fifteen percent of eighty?", "expect": ["fast"]}
+{"id": "s22", "say": "Remember that I shoot a Nikon Z8.", "expect": ["fast"], "note": "memory: just acknowledge"}
+{"id": "s23", "say": "What camera do I shoot?", "expect": ["fast"], "note": "answer from the brief, no recall", "brief": "The owner is a photographer and avid angler based on the San Mateo County coast near Half Moon Bay. Shoots a Nikon Z8. Uses imperial units and America/Los_Angeles time."}
+{"id": "s24", "say": "Can you dig deeper on that?", "expect": ["slow"], "history": [["user", "What are the interesting exhibitions at the Legion of Honor right now?"], ["model", "I couldn't find any major temporary exhibitions listed right now."]], "note": "explicit escalation"}
+{"id": "s25", "say": "Are you sure?", "expect": ["slow", "fast"], "history": [["user", "What are the interesting exhibitions at the Legion of Honor right now?"], ["model", "There aren't any major temporary exhibitions listed right now."]], "note": "doubt after a thin answer"}
+{"id": "s26", "say": "Yes please.", "expect": ["slow"], "history": [["user", "Any new restaurants in downtown San Mateo?"], ["model", "Whisper recently opened on Baldwin Avenue for Asian fusion brunch. Want me to dig into it for a fuller list?"]], "note": "accepting an offer"}
+{"id": "s27", "say": "No, that's fine.", "expect": ["fast"], "history": [["user", "Any new restaurants in downtown San Mateo?"], ["model", "Whisper recently opened on Baldwin Avenue for Asian fusion brunch. Want me to dig into it for a fuller list?"]], "note": "declining an offer"}
+{"id": "s28", "say": "Tell me more about it.", "expect": ["fast", "offer", "slow"], "history": [["user", "Who invented the Opus audio codec?"], ["model", "Opus came from Xiph.Org with Skype, standardised by the IETF."]]}

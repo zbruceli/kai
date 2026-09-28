@@ -121,6 +121,7 @@ embed your Wi-Fi password and token, so releases are source only; never share a 
 the Mac's mic and speakers.
 
 **Tests:** `cd relay && uv run pytest` (offline). Add `-m network -s` to hit NOAA and Open-Meteo for real.
+`uv run python evals/routing.py` checks which path Gemini Live picks for a set of requests (real Gemini, ~1 min per 30 cases).
 
 ## Repo map
 
