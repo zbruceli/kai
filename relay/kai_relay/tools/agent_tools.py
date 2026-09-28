@@ -43,7 +43,7 @@ async def check_inbox(ctx: ToolContext) -> ToolResult:
     items = hub.pending()
     if not items:
         return ToolResult({"updates": [], "note": "Nothing new."}, card("No updates", ["Nothing new yet"]))
-    hub.mark_delivered([i.id for i in items])
+    await hub.mark_delivered([i.id for i in items])  # clears the Stick's badge
     first = items[0].card if len(items) == 1 and items[0].card else None
     return ToolResult(
         {"updates": [i.summary() for i in items],

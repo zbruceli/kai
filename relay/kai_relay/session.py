@@ -117,6 +117,7 @@ class KaiSession:
         finally:
             if self.hub:
                 self.hub.unsubscribe(self._on_inbox_item)
+                self.hub.unwatch_count(self._on_inbox_count)
             idle.cancel()
             for task in self._tasks:
                 task.cancel()
@@ -136,7 +137,8 @@ class KaiSession:
                      "opus" if self._opus_down else "pcm")
             if self.hub:
                 self.hub.subscribe(self._on_inbox_item)
-                await self._send_inbox_count()
+                self.hub.watch_count(self._on_inbox_count)
+                await self._on_inbox_count(self.hub.count())
             if isinstance(m.get("sleep"), dict):
                 sl = m["sleep"]
                 self.power.write(self.device, "sleep", **sl)
@@ -352,18 +354,17 @@ class KaiSession:
                 await self._send_audio(b"", final=True)  # the last partial Opus frame
             await self._send({"type": "turn_complete"})
             if self._delivering and spoke:
-                self.hub.mark_delivered(self._delivering)
-                self._delivering = []
-                await self._send_inbox_count()
+                delivered, self._delivering = self._delivering, []
+                await self.hub.mark_delivered(delivered)  # the hub updates the badge
             await self._deliver_next()
 
     # ---- background brain ---------------------------------------------------
 
-    async def _send_inbox_count(self) -> None:
-        await self._send({"type": "inbox", "count": self.hub.count()})
+    async def _on_inbox_count(self, count: int) -> None:
+        """Keep the Stick's badge in step with the inbox, whichever way an update got read."""
+        await self._send({"type": "inbox", "count": count})
 
     async def _on_inbox_item(self, item: InboxItem) -> None:
-        await self._send_inbox_count()
         self._to_deliver.append(item)
         await self._deliver_next()
 

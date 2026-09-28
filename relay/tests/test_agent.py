@@ -92,9 +92,16 @@ def test_agent_tools_without_hermes(ctx):  # noqa: F811
 def test_check_inbox_marks_delivered(ctx, tmp_path):  # noqa: F811
     hub = AgentHub(AgentStore(tmp_path / "a.db"), client=object())  # any client counts as enabled
     ctx.agent = hub
-    hub.store.add_item("hermes", "Wind drops under 10 mph Saturday.", None, "")
+    badge = []
+
+    async def on_count(n):
+        badge.append(n)
+
+    hub.watch_count(on_count)
+    asyncio.run(hub.notify("Wind drops under 10 mph Saturday."))
     r = asyncio.run(tools.call("check_inbox", {}, ctx))
     assert r.data["updates"][0]["summary"].startswith("Wind") and hub.count() == 0
+    assert badge == [1, 0]  # the Stick's badge showed 1, then cleared once the update was read out
     r = asyncio.run(tools.call("check_inbox", {}, ctx))
     assert r.data["updates"] == []
 

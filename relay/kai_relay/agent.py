@@ -144,6 +144,7 @@ def parse_result(text: str) -> tuple[str, dict | None, str]:
 
 
 Listener = Callable[[InboxItem], Awaitable[None]]
+CountListener = Callable[[int], Awaitable[None]]
 
 
 class AgentHub:
@@ -151,6 +152,7 @@ class AgentHub:
         self.store = store
         self.client = client
         self._listeners: set[Listener] = set()
+        self._count_listeners: set[CountListener] = set()
         self._watchers: set[asyncio.Task] = set()
 
     @property
@@ -162,6 +164,21 @@ class AgentHub:
 
     def unsubscribe(self, listener: Listener) -> None:
         self._listeners.discard(listener)
+
+    def watch_count(self, listener: CountListener) -> None:
+        """Called with the new number of waiting updates whenever it changes (the Stick's badge)."""
+        self._count_listeners.add(listener)
+
+    def unwatch_count(self, listener: CountListener) -> None:
+        self._count_listeners.discard(listener)
+
+    async def _count_changed(self) -> None:
+        n = self.count()
+        for listener in list(self._count_listeners):
+            try:
+                await listener(n)
+            except Exception:
+                log.exception("inbox count listener failed")
 
     async def start(self) -> None:
         """Pick up runs that were in flight when the relay last stopped."""
@@ -189,6 +206,7 @@ class AgentHub:
                      task_id: int | None = None) -> InboxItem:
         item = self.store.add_item(source, speak, card, details_md, task_id)
         log.info("inbox +1 (%s): %s", source, speak[:120])
+        await self._count_changed()
         for listener in list(self._listeners):
             try:
                 await listener(item)
@@ -202,8 +220,10 @@ class AgentHub:
     def count(self) -> int:
         return self.store.count_pending()
 
-    def mark_delivered(self, ids: list[int]) -> None:
+    async def mark_delivered(self, ids: list[int]) -> None:
+        """Read out, spoken, or otherwise seen: no longer counts toward the badge."""
         self.store.mark_delivered(ids)
+        await self._count_changed()
 
     def _watch(self, task_id: int, run_id: str) -> None:
         t = asyncio.create_task(self._follow(task_id, run_id))
