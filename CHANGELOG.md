@@ -1,8 +1,28 @@
 # Changelog
 
-## Unreleased: background brain (phases 1 and 2)
+## Unreleased: background brain (phases 1–3)
+
+**Phase 3: reminders, briefings, watches**
+- **Reminders** ("remind me at 5:30 to pack the ND filters", "in 20 minutes"): the relay keeps them and
+  does the date maths itself. Kai says them out loud at the time.
+- **Briefings** ("every Saturday at 5:45 give me a fishing brief") and **watches** ("tell me if the
+  wind at Half Moon Bay drops under 10 mph this weekend"):
+  - both are Hermes scheduled jobs that report through `kai_notify`;
+  - a watch stays silent until its condition holds, tells you once, and then the relay removes it;
+  - `list_scheduled` and `cancel_scheduled` ("cancel the wind watch") manage them.
+- **The Stick wakes itself.** The relay sends the next due time, and the Stick sets its RTC timer
+  before deep sleep. On a timer wake it plays a **two-note chime** and Kai speaks what's due; with
+  nothing due it goes back to sleep after 10 s.
+  - Watches never wake the Stick between 22:00 and 07:00; their news waits for the morning.
+- **Tested end to end:**
+  - a spoken reminder was delivered live;
+  - a timer-wake reconnect 40 s early fired it and spoke it once (after a fix);
+  - a briefing and a watch were set, listed and cancelled by voice;
+  - a watch fired, was spoken and removed itself via the relay.
+- Firmware 0.11.0.
 
 **Phase 2: memory**
+
 - **Kai remembers across conversations and deep sleeps.** When a conversation ends, its transcript goes
   to Hermes, which updates its memory (it skips small talk, secrets and one-off lookups, and honours
   "forget …"). It then sends back a short **profile brief** (`kai_profile_brief`).

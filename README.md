@@ -65,6 +65,9 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
 | "Research three sunrise spots near Half Moon Bay for this weekend, tell me later" | slow: `ask_agent` → Hermes | "On it", then the result card |
 | "Any updates?" | `check_inbox` | the waiting results; the badge clears |
 | "What did I say about Pigeon Point last month?" | slow: `recall` → Hermes memory | the answer, or an update if it takes a while |
+| "Remind me at 5:30 to pack the ND filters" | `remind` (the relay's own) | chime and "Reminder" at 5:30, waking the Stick if needed |
+| "Every Saturday at 5:45 give me a fishing brief for Pillar Point" | slow: `schedule_briefing` → Hermes job | chime and the brief every Saturday |
+| "Tell me if the wind at Half Moon Bay drops under 10 mph this weekend" | slow: `watch_for` → Hermes job | chime and the news, once, when it happens |
 
 "Here" and "near me" mean the home location in the relay's `.env` (`KAI_HOME_*`).
 
@@ -77,6 +80,9 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
 | **Side** hold | hush Kai mid-answer; otherwise show status (Wi-Fi, relay, battery) |
 
 - **Badge:** a yellow number in the top-left means updates are waiting.
+- **Chime:** two rising notes mean Kai is about to tell you something you didn't just ask: a reminder,
+  a briefing, a watch that fired, or a finished task. The Stick wakes itself for these; watches stay
+  quiet at night (22:00–07:00).
 - **Sleep:** Kai dims after 15 s. On battery it deep-sleeps after 45 s; either button wakes it, and
   holding the front button to wake records at once, so you can just press and talk. On USB the screen
   turns off at 45 s but Kai stays connected.
@@ -139,7 +145,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (protocol, tools, security)
 - [x] Deep sleep with press-and-talk from sleep; Opus audio; power savings
 - [x] Slow path, phase 1: hand-off to Hermes, inbox with badge, results spoken when ready
 - [x] Slow path, phase 2: memory across conversations (transcripts to Hermes, a profile brief Kai starts with, `recall`)
-- [ ] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
+- [x] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
 - [ ] Remote access: phone as a BLE bridge (GPS for "near me"), or a relay reachable away from home
 - [ ] IMU gestures (lift to wake, shake to hush), OTA updates
 

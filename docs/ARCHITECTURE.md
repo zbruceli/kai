@@ -28,6 +28,7 @@ definition is the docstring at the top of `relay/kai_relay/session.py`.
 | ← | `card {title, lines[≤5], icon?, mood?}` | tool result for the screen |
 | ← | `interrupted`, `turn_complete`, `state {idle\|thinking}` | turn control |
 | ← | `inbox {count}` | updates waiting from the background brain (badge) |
+| ← | `schedule {wake_in_s}`, `nudge` | when to wake on the RTC timer; chime before a proactive update |
 
 Binary messages start with a kind byte: `0x02` is followed by `[u16 LE length][Opus packet]` entries
 (`relay/kai_relay/opus.py`, `firmware/src/voice_codec.cpp`). Firmware advertises `"codecs": ["opus"]` in
@@ -120,6 +121,20 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
   - `recall` asks Hermes's memory and past sessions, with an 8 s budget before falling back to the
     inbox.
   - "Forget" removes a fact from memory and the brief. Hermes's past-session history is kept.
+- **Time (`schedule.py`):**
+  - **Reminders** are the relay's own: `remind` takes minutes, or HH:MM plus a spoken day, and the relay
+    works out the date. A 15 s loop fires them into the inbox.
+  - **Briefings and watches** are Hermes cron jobs named `kai-brief-N` / `kai-watch-N`, with Hermes
+    parsing the schedule. They must use Kai's tools for tides, weather and light.
+  - A watch replies `[SILENT]` until its condition holds, then calls `kai_notify(watch=…)`, and the relay
+    deletes the job. Hermes jobs can't remove themselves while `cron.allow_agent_scheduling` stays
+    `false`, which it does.
+  - `next_wake` is the earliest pending reminder, or a job's next run + 6 min; for watches it's pushed
+    past quiet hours (22:00–07:00). Sessions send `{"type": "schedule", "wake_in_s": N}`, and the Stick
+    sets its RTC timer before deep sleep.
+  - On a timer wake, `hello` carries `"wake": "timer"`. The relay fires reminders due within 60 s, then
+    speaks every waiting update, each preceded by `{"type": "nudge"}` (the chime). With nothing due, the
+    Stick sleeps again after 10 s.
 - **Hermes's lock-down** (`relay/deploy/hermes/`):
   - pinned image (tag and digest), with only its data folder mounted;
   - no terminal, file, code, browser or computer-use tools;
