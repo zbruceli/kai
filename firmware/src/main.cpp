@@ -24,7 +24,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.10.0";
+static constexpr const char* FW_VERSION = "0.11.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -38,6 +38,10 @@ static constexpr uint8_t BRIGHTNESS_AWAKE = 90;
 static constexpr uint8_t BRIGHTNESS_DIM = 15;
 static constexpr uint32_t DIM_AFTER_MS = 15000;
 static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 45000;      // on battery
+// Woken by its own timer (a reminder or briefing is due) and nobody touched it: sleep again soon.
+static constexpr uint32_t TIMER_WAKE_IDLE_MS = 10000;
+static constexpr uint32_t TIMER_WAKE_CONNECT_MS = 25000;   // give Wi-Fi and the relay this long first
+static constexpr uint32_t MAX_WAKE_IN_S = 7 * 24 * 3600;
 static constexpr uint32_t CPU_MHZ_BUSY = 240;               // listening, thinking, speaking
 static constexpr uint32_t CPU_MHZ_IDLE = 80;                // lowest speed Wi-Fi allows
 // M5PM1 (I2C 0x6E): GPIO2 switches the L3B rail (LCD, backlight, mic, codec, amp).
@@ -76,6 +80,10 @@ static bool wsStarted = false;
 static bool wsConnected = false;
 static bool everConnected = false;
 static bool wokeFromSleep = false;
+static bool wokeByTimer = false;   // this boot came from the RTC timer, not a button
+static bool touched = false;       // a button was pressed since boot
+static bool wakeTimerSet = false;  // the relay asked to be woken for something due
+static uint32_t wakeTimerAtMs = 0;
 static uint32_t wsBeganAt = 0;
 static bool usedRelayCache = false;
 static bool connectedSinceBegin = false;
@@ -153,6 +161,7 @@ static int64_t rtcNowUs() {
 
 static void wake() {
   lastInteraction = millis();
+  touched = true;
   if (screenOff) {
     M5.Display.wakeup();
     screenOff = false;
@@ -195,6 +204,13 @@ static void wake() {
     rtc_gpio_pullup_en(pin);
     rtc_gpio_pulldown_dis(pin);
   }
+  // Something is due later (a reminder, a briefing, a watch check): wake on the RTC timer for it too.
+  if (wakeTimerSet) {
+    int32_t remainMs = int32_t(wakeTimerAtMs - millis());
+    if (remainMs < 5000) remainMs = 5000;
+    esp_sleep_enable_timer_wakeup(uint64_t(remainMs) * 1000ULL);
+    log_i("timer wake in %d s", remainMs / 1000);
+  }
   esp_deep_sleep_start();
 }
 
@@ -216,8 +232,10 @@ static void powerSave(uint32_t now) {
       M5.Display.sleep();
       screenOff = true;
     }
-  } else if (idle > DEEP_SLEEP_AFTER_MS) {
-    goToDeepSleep();
+  } else {
+    uint32_t sleepAfter = DEEP_SLEEP_AFTER_MS;
+    if (wokeByTimer && !touched) sleepAfter = mode == Mode::Offline ? TIMER_WAKE_CONNECT_MS : TIMER_WAKE_IDLE_MS;
+    if (idle > sleepAfter) goToDeepSleep();
   }
 }
 
@@ -385,6 +403,12 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     if (hushed || mode == Mode::Listening) return;
     face::appendReplyText(doc["delta"] | "");
     replyActivity();
+  } else if (!strcmp(type, "schedule")) {
+    const uint32_t s = min<uint32_t>(doc["wake_in_s"] | 0, MAX_WAKE_IN_S);
+    wakeTimerSet = s > 0;
+    wakeTimerAtMs = millis() + s * 1000UL;
+  } else if (!strcmp(type, "nudge")) {
+    audio::chime();  // Kai is about to say something it wasn't asked for
   } else if (!strcmp(type, "inbox")) {
     face::setInbox(doc["count"] | 0);
   } else if (!strcmp(type, "interrupted")) {
@@ -412,6 +436,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
+      if (!everConnected) hello["wake"] = wokeByTimer ? "timer" : (wokeFromSleep ? "button" : "boot");
       hello["codecs"].to<JsonArray>().add("opus");  // needs relay 0.9+
 #ifdef KAI_TELEMETRY
       if (wokeFromSleep && sleptAtUs && !everConnected) {  // one deep-sleep measurement per wake
@@ -622,6 +647,8 @@ void setup() {
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
     wokeFromSleep = true;
     wokeToTalk = esp_sleep_get_ext1_wakeup_status() & (1ULL << PIN_BTN_A);
+  } else if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+    wokeFromSleep = wokeByTimer = true;
   }
 
   startWifi();

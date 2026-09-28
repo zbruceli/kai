@@ -26,6 +26,7 @@ float lastLevel = 0;
 uint32_t underruns = 0;
 
 constexpr uint8_t ES8311_ADDR = 0x18;
+constexpr int CHIME_CHANNEL = 7;  // speech plays on channel 0
 
 // ---- loudness: Gemini's voice is fairly quiet for a 1 W speaker, so boost it digitally, but scale the
 // boost per chunk so peaks never clip. Hardware volume is maxed on USB; on battery M5 advises staying
@@ -91,6 +92,12 @@ void speakerOn() {
   if (M5.Speaker.isRunning()) return;
   M5.Speaker.begin();
   updateVolume();
+}
+
+void chime() {
+  speakerOn();
+  M5.Speaker.tone(880, 90, CHIME_CHANNEL, true);
+  M5.Speaker.tone(1320, 140, CHIME_CHANNEL, false);  // queued after the first note
 }
 
 void powerDown() {

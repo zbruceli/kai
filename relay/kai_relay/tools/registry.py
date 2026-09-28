@@ -37,6 +37,7 @@ class ToolContext:
     http: httpx.AsyncClient
     notes: Any  # NotesStore; typed loosely to avoid an import cycle
     agent: Any = None  # AgentHub, when Hermes is configured
+    scheduler: Any = None  # Scheduler (reminders, briefings, watches), when Hermes is configured
     cache: dict[str, Any] = field(default_factory=dict)
 
 
@@ -67,7 +68,8 @@ def tool(name: str, description: str, properties: dict[str, Any], required: list
     return decorator
 
 
-AGENT_TOOLS = {"ask_agent", "check_inbox", "recall"}
+AGENT_TOOLS = {"ask_agent", "check_inbox", "recall", "remind", "schedule_briefing", "watch_for",
+               "list_scheduled", "cancel_scheduled"}
 
 
 def declarations(with_agent: bool = True) -> list[dict[str, Any]]:

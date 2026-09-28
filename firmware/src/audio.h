@@ -24,6 +24,7 @@ void pollSpeaker(bool turnComplete);
 // (after a reply, and before deep sleep); enqueue() and startMic() bring it back as needed.
 void speakerOn();
 void powerDown();
+void chime();  // two short rising notes before a proactive update
 void clearPlayback();
 bool playbackIdle();
 

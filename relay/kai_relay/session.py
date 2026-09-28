@@ -1,7 +1,8 @@
 """Bridges one Stick WebSocket to one Gemini Live session.
 
 Device -> relay
-    text   {"type": "hello", "device": str, "battery": int, "fw": str, "codecs"?: ["opus"], "sleep"?: {...}}
+    text   {"type": "hello", "device": str, "battery": int, "fw": str, "codecs"?: ["opus"],
+            "wake"?: "timer" | "button", "sleep"?: {...}}
     text   {"type": "power", ...}   measurement firmware only (docs/POWER.md): logged to data/power.csv
     text   {"type": "ptt_start"}            button A pressed (also barges in on Kai speaking)
     binary mic audio, only between ptt_start and ptt_end:
@@ -15,6 +16,8 @@ Relay -> device
     text   {"type": "interrupted"}           drop any queued speech
     text   {"type": "turn_complete"}
     text   {"type": "inbox", "count": int}   updates waiting from the background brain (badge)
+    text   {"type": "schedule", "wake_in_s": int}  wake on a timer this far ahead (0 = no timer needed)
+    text   {"type": "nudge"}                  a proactive update is about to be spoken: play the chime
     binary Kai's speech: 0x02 + Opus bundle at 24 kHz if the device asked for opus, else raw PCM16
            mono 24 kHz; <= DEVICE_FRAME bytes per message
 """
@@ -67,6 +70,7 @@ class KaiSession:
         self.device = "?"
         self.power = PowerLog(settings.data_dir)
         self.hub = ctx.agent if ctx.agent and ctx.agent.enabled else None
+        self.scheduler = ctx.scheduler if self.hub else None
         self._to_deliver: list[InboxItem] = []  # background results to speak when Kai is free
         self._delivering: list[int] = []        # inbox ids injected into the current Gemini turn
         self._transcript: list[str] = []        # this Gemini conversation, handed to memory when it ends
@@ -119,6 +123,8 @@ class KaiSession:
             if self.hub:
                 self.hub.unsubscribe(self._on_inbox_item)
                 self.hub.unwatch_count(self._on_inbox_count)
+            if self.scheduler:
+                self.scheduler.unwatch(self._on_schedule)
             idle.cancel()
             for task in self._tasks:
                 task.cancel()
@@ -140,6 +146,15 @@ class KaiSession:
                 self.hub.subscribe(self._on_inbox_item)
                 self.hub.watch_count(self._on_inbox_count)
                 await self._on_inbox_count(self.hub.count())
+            if self.scheduler:
+                self.scheduler.watch(self._on_schedule)
+                if m.get("wake") == "timer":
+                    # It woke itself to deliver something: fire what's (nearly) due and say it all now.
+                    await self.scheduler.fire_due(within_s=60)
+                    self._to_deliver = self.hub.pending()
+                    log.info("[%s] timer wake: %d update(s) to deliver", self.device, len(self._to_deliver))
+                    await self._deliver_next()
+                await self._on_schedule(self.scheduler.next_wake())
             if isinstance(m.get("sleep"), dict):
                 sl = m["sleep"]
                 self.power.write(self.device, "sleep", **sl)
@@ -382,6 +397,11 @@ class KaiSession:
         """Keep the Stick's badge in step with the inbox, whichever way an update got read."""
         await self._send({"type": "inbox", "count": count})
 
+    async def _on_schedule(self, wake) -> None:
+        """Tell the Stick when to wake on its own next (it only matters once it deep-sleeps)."""
+        wake_in = max(5, int((wake - datetime.now()).total_seconds())) if wake else 0
+        await self._send({"type": "schedule", "wake_in_s": wake_in})
+
     async def _on_inbox_item(self, item: InboxItem) -> None:
         self._to_deliver.append(item)
         await self._deliver_next()
@@ -394,6 +414,7 @@ class KaiSession:
         self._delivering = [item.id]
         self._card_sent = True  # this turn brings its own card; no backstop
         self._utterance = ""
+        await self._send({"type": "nudge"})  # chime: something Kai wasn't asked for is coming
         if item.card:
             await self._send_card(item.card)
         try:

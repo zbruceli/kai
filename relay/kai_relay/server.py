@@ -9,6 +9,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from . import mcp_server, tools
 from .agent import AgentHub, AgentStore
+from .schedule import Scheduler
 from .config import load_settings
 from .hermes import HermesClient
 from .session import KaiSession
@@ -35,11 +36,14 @@ async def run() -> None:
         hermes = None
         if settings.hermes_url and settings.hermes_api_key:
             hermes = HermesClient(settings.hermes_url, settings.hermes_api_key, http)
-        hub = AgentHub(AgentStore(settings.data_dir / "agent.db"), hermes)
-        ctx = tools.ToolContext(settings=settings, http=http, notes=notes, agent=hub)
+        store = AgentStore(settings.data_dir / "agent.db")
+        hub = AgentHub(store, hermes)
+        scheduler = Scheduler(hub, store, hermes) if hermes else None
+        ctx = tools.ToolContext(settings=settings, http=http, notes=notes, agent=hub, scheduler=scheduler)
         background: set[asyncio.Task] = set()
         if hermes:
             await hub.start()
+            background.add(asyncio.create_task(scheduler.run()))
             log.info("background brain: Hermes at %s (%s)", settings.hermes_url,
                      "healthy" if await hermes.health() else "NOT responding yet")
             if settings.mcp_token:

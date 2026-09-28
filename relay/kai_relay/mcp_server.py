@@ -34,15 +34,18 @@ def build(ctx: tools.ToolContext, hub: AgentHub) -> MCPServer:
         "Send the owner an update through Kai. It is spoken aloud if Kai is awake, otherwise it waits in "
         "Kai's inbox with a badge. `summary`: one or two short spoken sentences, no markdown or URLs. "
         "`card_title` (<= 22 chars) and `card_lines` (<= 5 lines of <= 26 chars) are shown on the screen. "
-        "`details_md` holds the full text."
+        "`details_md` holds the full text. From a watch job whose condition was met, pass `watch` = the watch's "
+        "name (e.g. kai-watch-3) so it stops."
     ))
     async def kai_notify(summary: str, card_title: str = "", card_lines: list[str] | None = None,
-                         details_md: str = "") -> str:
+                         details_md: str = "", watch: str = "") -> str:
         card = None
         if card_title or card_lines:
             card = {"title": (card_title or "Update")[:22], "lines": [str(x)[:26] for x in (card_lines or [])][:5]}
-        item = await hub.notify(summary.strip()[:400], card, details_md, source="hermes")
-        return f"queued as update {item.id}"
+        item = await hub.notify(summary.strip()[:400], card, details_md, source="watch" if watch else "hermes")
+        if watch and ctx.scheduler:
+            await ctx.scheduler.watch_fired(watch.strip())
+        return f"queued as update {item.id}" + (f"; {watch} stopped" if watch else "")
 
     @mcp.tool(description=(
         "Replace the short brief Kai's voice starts every conversation with: at most 800 characters of plain "

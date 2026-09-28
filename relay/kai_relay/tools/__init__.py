@@ -1,4 +1,4 @@
-from . import agent_tools, notes, parking, tides, weather  # noqa: F401  (importing registers the tools)
+from . import agent_tools, notes, parking, schedule_tools, tides, weather  # noqa: F401  (importing registers the tools)
 from .notes import NotesStore
 from .registry import ToolContext, ToolError, ToolResult, call, card, declarations
 

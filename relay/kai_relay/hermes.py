@@ -54,3 +54,31 @@ class HermesClient:
             return {"status": "lost", "error": "Hermes no longer knows this run"}
         r.raise_for_status()
         return r.json()
+
+    # ---- scheduled jobs (briefings and watches) ----
+
+    async def create_job(self, name: str, prompt: str, schedule: str) -> dict:
+        """Create a Hermes cron job. Hermes parses the schedule ("every saturday at 5:45am", "every 3h")."""
+        body = {"name": name, "prompt": prompt, "schedule": schedule, "deliver": "local"}
+        try:
+            r = await self.http.post(f"{self.base_url}/api/jobs", json=body, headers=self.headers, timeout=30)
+        except httpx.HTTPError as e:
+            raise HermesError(f"Hermes unreachable: {e}") from e
+        if r.status_code >= 400:
+            raise HermesError(f"Hermes couldn't schedule that ({r.text[:120]})")
+        return r.json()["job"]
+
+    async def list_jobs(self) -> list[dict]:
+        try:
+            r = await self.http.get(f"{self.base_url}/api/jobs", headers=self.headers, timeout=15)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HermesError(f"Hermes unreachable: {e}") from e
+        return r.json().get("jobs", [])
+
+    async def delete_job(self, job_id: str) -> bool:
+        try:
+            r = await self.http.delete(f"{self.base_url}/api/jobs/{job_id}", headers=self.headers, timeout=15)
+        except httpx.HTTPError as e:
+            raise HermesError(f"Hermes unreachable: {e}") from e
+        return r.status_code < 400
