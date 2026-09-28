@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased: background brain (phase 1)
+## Unreleased: background brain (phases 1 and 2)
+
+**Phase 2: memory**
+- **Kai remembers across conversations and deep sleeps.** When a conversation ends, its transcript goes
+  to Hermes, which updates its memory (it skips small talk, secrets and one-off lookups, and honours
+  "forget …"). It then sends back a short **profile brief** (`kai_profile_brief`).
+- **Kai's voice starts every conversation with that brief,** so facts about you are answered instantly
+  with no tool call. `recall` asks Hermes about anything else from the past: answered live within 8 s,
+  otherwise it arrives as an update.
+- **Notes stay notes:** "note / jot down" saves a trip note, while "remember that I…" needs no tool.
+- **An update is spoken on one Stick only,** the most recently used one; every connected Stick updates
+  its badge.
+- **Tested end to end on the home server:**
+  - remember → the brief was updated;
+  - a fresh session answered from the brief without a tool;
+  - a slow recall fell back to the inbox and was spoken;
+  - "forget" removed the fact from Hermes's memory and from the brief.
+
+**Phase 1: background tasks**
 
 - **Hybrid agent:** Kai's voice (Gemini Live) stays the fast path and hands slow work to a local
   **Hermes Agent** with `ask_agent` ("On it"). Results come back as a spoken answer plus card if the Stick

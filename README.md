@@ -36,7 +36,8 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
   - makes sure a card appears even when Gemini skips a tool;
   - hands slow work to Hermes, and keeps the inbox.
 - **Hermes** runs next to the relay in a pinned Docker container: web search, memory and skills, but no
-  shell, file or browser tools, and nothing acts unattended. It reaches back into Kai through a small MCP
+  shell, file or browser tools, and nothing acts unattended. After each conversation it updates its
+  memory of you and sends Kai a short brief, so Kai starts every conversation already knowing you. It reaches back into Kai through a small MCP
   server on localhost (`kai_notify` and Kai's data tools).
 
 ## Screens
@@ -63,6 +64,7 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
 | "Note: f/11, 1/4 s, 10-stop ND at the lighthouse" | fast: `save_note` | "Noted #3", filed under the current trip |
 | "Research three sunrise spots near Half Moon Bay for this weekend, tell me later" | slow: `ask_agent` → Hermes | "On it", then the result card |
 | "Any updates?" | `check_inbox` | the waiting results; the badge clears |
+| "What did I say about Pigeon Point last month?" | slow: `recall` → Hermes memory | the answer, or an update if it takes a while |
 
 "Here" and "near me" mean the home location in the relay's `.env` (`KAI_HOME_*`).
 
@@ -136,7 +138,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (protocol, tools, security)
 - [x] Voice, search, tides, weather, light, parking, notes, with cards
 - [x] Deep sleep with press-and-talk from sleep; Opus audio; power savings
 - [x] Slow path, phase 1: hand-off to Hermes, inbox with badge, results spoken when ready
-- [ ] Slow path, phase 2: memory across sessions (conversations to Hermes, a profile brief for Kai)
+- [x] Slow path, phase 2: memory across conversations (transcripts to Hermes, a profile brief Kai starts with, `recall`)
 - [ ] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
 - [ ] Remote access: phone as a BLE bridge (GPS for "near me"), or a relay reachable away from home
 - [ ] IMU gestures (lift to wake, shake to hush), OTA updates

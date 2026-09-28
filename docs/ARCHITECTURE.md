@@ -109,6 +109,17 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
   - it marks the item delivered once Kai has said it.
 - **`check_inbox`** reads waiting items on request. The persona mentions waiting updates at the start of
   a session.
+- **Only one Stick speaks an update:** the most recently used one (last button press). Every connected
+  Stick gets the badge count.
+- **Memory:**
+  - each Gemini Live conversation is transcribed (owner, Kai, tool calls);
+  - when it closes, it goes to Hermes as a *memory* run, which produces no inbox item;
+  - Hermes updates its memory and calls `kai_profile_brief`;
+  - the relay stores the brief (≤ 800 chars) and puts it in the system prompt of every new
+    conversation;
+  - `recall` asks Hermes's memory and past sessions, with an 8 s budget before falling back to the
+    inbox.
+  - "Forget" removes a fact from memory and the brief. Hermes's past-session history is kept.
 - **Hermes's lock-down** (`relay/deploy/hermes/`):
   - pinned image (tag and digest), with only its data folder mounted;
   - no terminal, file, code, browser or computer-use tools;
