@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased: background brain (phases 1–3)
+## v0.11.0: background brain
+
+Kai gets a slow path next to its fast voice: a local, locked-down Hermes Agent that does long tasks,
+remembers you across conversations, and keeps time (reminders, briefings, watches that wake the Stick).
+
+**Upgrade order:** update the relay first (`git pull && uv sync --frozen`, then restart it), then flash
+the firmware. Everything in this release is optional: without the `HERMES_*` settings the relay behaves
+as in 0.9. To turn it on, follow [relay/deploy/hermes/README.md](relay/deploy/hermes/README.md). Firmware
+0.11 works with relay 0.9, just without badges, chimes or timer wakes.
 
 **Phase 3: reminders, briefings, watches**
 - **Reminders** ("remind me at 5:30 to pack the ND filters", "in 20 minutes"): the relay keeps them and
@@ -19,6 +27,8 @@
   - a timer-wake reconnect 40 s early fired it and spoke it once (after a fix);
   - a briefing and a watch were set, listed and cancelled by voice;
   - a watch fired, was spoken and removed itself via the relay.
+- An action is confirmed once: Gemini Live sometimes said "Got it, I'll remind you…" twice (around the
+  tool call, then again on its result), so the relay drops the unprompted repeat.
 - Firmware 0.11.0.
 
 **Phase 2: memory**
