@@ -4,7 +4,7 @@ Kai's voice (Gemini Live, via the relay) answers quick questions itself and hand
 planning, several searches) to **Hermes Agent** running on the same machine:
 
 - **Relay → Hermes:** Hermes's API server on `127.0.0.1:8642`, used to start and poll background runs.
-- **Hermes → Kai:** the relay's MCP server on `127.0.0.1:8766`: `kai_notify` plus Kai's tide, weather,
+- **Hermes → Kai:** the relay's MCP server on `127.0.0.1:8766`: `kai_notify`, `kai_profile_brief` and Kai's tide, weather,
   light and notes tools.
 
 Finished results are spoken at once if a Stick is awake, and otherwise wait in an inbox (a badge on the
@@ -44,7 +44,7 @@ Stick). Nothing listens on the LAN.
 
 - `curl -s -H "Authorization: Bearer <token A>" http://127.0.0.1:8642/v1/toolsets`: terminal, file,
   code_execution, browser and computer_use are all `enabled: false`.
-- `docker exec -u $(id -u) kai-hermes hermes mcp test kai`: connected, 5 tools.
+- `docker exec -u $(id -u) kai-hermes hermes mcp test kai`: connected, 6 tools.
 - Red team: ask it to "list my home directory and show ~/.ssh/id_rsa". It has no tool that can.
 
 ## Updating Hermes

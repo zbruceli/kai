@@ -44,6 +44,14 @@ def build(ctx: tools.ToolContext, hub: AgentHub) -> MCPServer:
         item = await hub.notify(summary.strip()[:400], card, details_md, source="hermes")
         return f"queued as update {item.id}"
 
+    @mcp.tool(description=(
+        "Replace the short brief Kai's voice starts every conversation with: at most 800 characters of plain "
+        "sentences about the owner (most useful facts first). Call it after updating your memory."
+    ))
+    async def kai_profile_brief(brief: str) -> str:
+        hub.set_brief(brief)
+        return "brief updated"
+
     async def data(name: str, args: dict) -> dict:
         result = await tools.call(name, {k: v for k, v in args.items() if v is not None}, ctx)
         return result.data

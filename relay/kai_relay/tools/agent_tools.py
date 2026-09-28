@@ -50,3 +50,25 @@ async def check_inbox(ctx: ToolContext) -> ToolResult:
          "tell_user": "Summarise each update in a sentence or two, newest last."},
         first or card(f"{len(items)} updates", [i.speak for i in items]),
     )
+
+
+@tool(
+    "recall",
+    "Ask Kai's long-term memory about the owner's past: earlier conversations, plans, places, gear, what they "
+    "said or asked before. Use it for 'what did I…', 'when did we…', 'remind me what…'. Not for trip notes "
+    "(use list_notes) or current facts (use search or the data tools).",
+    {"question": {"type": "STRING", "description": "The question about the past, self-contained."}},
+    required=["question"],
+)
+async def recall(ctx: ToolContext, question: str) -> ToolResult:
+    hub = _hub(ctx)
+    try:
+        answer = await hub.recall(question)
+    except HermesError as e:
+        raise ToolError(f"My memory is unavailable right now ({e}).") from e
+    if answer is None:
+        return ToolResult({"pending": True,
+                           "tell_user": "Say you're checking your memory and will tell them shortly."},
+                          card("Remembering...", [question[:26]]))
+    speak, answer_card = answer
+    return ToolResult({"answer": speak, "tell_user": "Tell them this in your own words."}, answer_card)

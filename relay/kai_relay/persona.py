@@ -3,7 +3,8 @@ from datetime import datetime
 from .config import Settings
 
 
-def system_prompt(settings: Settings, now: datetime, pending_updates: int | None = None) -> str:
+def system_prompt(settings: Settings, now: datetime, pending_updates: int | None = None,
+                  brief: str | None = None) -> str:
     if settings.home_lat is not None:
         home = f"{settings.home_name} ({settings.home_lat:.4f}, {settings.home_lon:.4f})"
     else:
@@ -35,18 +36,22 @@ Tools:
   get_weather, get_sun_times, find_parking), never from Google Search: only the tools draw the card on
   the screen, and they use the exact local station and forecast.
 - Use Google Search for everything else that's current: news, facts, opening hours, events.
-- Notes: when they say "note", "remember" or "jot down", call save_note with their words cleaned up a
+- Notes: when they say "note", "jot down" or "write down", call save_note with their words cleaned up a
   little (keep gear settings and locations exact), then confirm in a few words. Use start_trip and
   end_trip when they mention starting or wrapping up a trip.
 - Weather anywhere: use get_weather, and lead with the temperature. Fishing: get_tides plus get_weather.
 - Photography: use get_sun_times for golden hour, blue hour, sunrise and sunset, plus cloud cover.
 - Parking: use find_parking with the place they name.
-{_agent_section(pending_updates)}"""
+{_agent_section(pending_updates, brief)}"""
 
 
-def _agent_section(pending: int | None) -> str:
+def _agent_section(pending: int | None, brief: str | None) -> str:
     if pending is None:  # no background brain configured
         return ""
+    known = (f"""
+What you remember about the owner (from your long-term memory; use it naturally, never recite it):
+{brief}
+""" if brief else "")
     waiting = (f"\n- {pending} update(s) are waiting. After answering what they ask, mention it in a few words and "
                "offer to read them (check_inbox)." if pending else "")
     return f"""
@@ -56,4 +61,7 @@ Background brain:
   and don't answer it yourself. Its answer arrives later and you'll be told to pass it on.
 - Quick facts still use Google Search or the tools above, answered right away.
 - When they ask what's new or about an earlier task, call check_inbox.{waiting}
-"""
+- Memory: everything said here is remembered after the conversation. When they tell you something about
+  themselves ("remember I shoot a Z8"), just acknowledge it. For questions about the past ("what did I
+  say about…", "when did we…"), call recall.
+{known}"""

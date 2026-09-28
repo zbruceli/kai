@@ -4,6 +4,11 @@ Kai's voice (Gemini Live) hands slow work to Hermes with ask_agent; the hub star
 it, and turns the result into an inbox item. Hermes can also post to the inbox itself through the Kai MCP
 server (kai_notify). Connected Sticks are told immediately; a sleeping Stick sees a badge when it wakes.
 
+Memory (phase 2): when a voice conversation ends, its transcript goes to Hermes as a *memory* run, which
+updates Hermes's memory and sends back a short profile brief (kai_profile_brief) that Kai's voice starts
+every conversation with. `recall` asks Hermes about the past, waiting a few seconds before falling back
+to the inbox.
+
 The inbox belongs to Kai's single owner and is delivered to whichever Stick is connected.
 """
 
@@ -23,6 +28,8 @@ log = logging.getLogger("kai.agent")
 
 POLL_S = 3
 RUN_TIMEOUT_S = 15 * 60
+RECALL_BUDGET_S = 8     # how long Kai's voice waits for a memory answer before it becomes an update
+BRIEF_MAX_CHARS = 800
 
 # Every task tells Hermes how its answer will be used: spoken on a tiny speaker, shown on a 240x135 card.
 TASK_PROMPT = """You are the background brain of Kai, a pocket voice assistant. Kai's owner asked for this
@@ -35,6 +42,27 @@ one JSON object and nothing else:
 {{"speak": "one or two short spoken sentences with the answer: no markdown, no URLs, no lists",
   "card": {{"title": "at most 22 characters", "lines": ["at most 26 characters each", "up to 5 lines"]}},
   "details_md": "the full answer in Markdown, with sources as links"}}"""
+
+# After each voice conversation: learn from it, then refresh the brief Kai's voice starts with.
+MEMORY_PROMPT = """This is the transcript of a voice conversation between Kai's owner and Kai (the pocket
+voice assistant you are the background brain of). It happened just now, ending {today}.
+
+{transcript}
+
+1. Update your memory about the owner with anything durable and useful for future conversations:
+   preferences, gear, favourite places, plans and dates, people, recurring interests, how they like
+   answers. Skip small talk, one-off lookups and anything already known. If the owner asked Kai to
+   forget something, remove it. Never store secrets (passwords, codes, account numbers).
+2. Then call kai_profile_brief with an updated brief: at most 800 characters of plain sentences with
+   what Kai's voice should know at the start of every conversation (the most useful facts first).
+   Skip this step if nothing changed.
+Reply with one short line saying what you remembered, or "nothing new"."""
+
+RECALL_PROMPT = """Kai's owner asked Kai, by voice, about something from the past: {question}
+Answer from your memory and past sessions (use session_search), not from the web. If you don't know,
+say so plainly. Today is {today}. Reply with ONLY one JSON object:
+{{"speak": "one or two short spoken sentences", "card": {{"title": "at most 22 characters",
+  "lines": ["at most 26 characters each", "up to 5 lines"]}}, "details_md": "what you found, in Markdown"}}"""
 
 
 @dataclass
@@ -67,6 +95,7 @@ class AgentStore:
                 status TEXT NOT NULL,          -- starting | running | done | failed
                 error TEXT
             );
+            CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
             CREATE TABLE IF NOT EXISTS inbox (
                 id INTEGER PRIMARY KEY,
                 created_at TEXT NOT NULL,
@@ -79,12 +108,24 @@ class AgentStore:
             );
             """
         )
+        # kind: task (answer goes to the inbox) | recall (inbox only if slow) | memory (no inbox)
+        if "kind" not in {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}:
+            with self.db:
+                self.db.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'")
 
-    def add_task(self, task: str) -> int:
+    def add_task(self, task: str, kind: str = "task") -> int:
         with self.db:
-            cur = self.db.execute("INSERT INTO tasks (created_at, task, status) VALUES (?, ?, 'starting')",
-                                  (_now(), task))
+            cur = self.db.execute("INSERT INTO tasks (created_at, task, status, kind) VALUES (?, ?, 'starting', ?)",
+                                  (_now(), task, kind))
         return cur.lastrowid
+
+    def get(self, key: str) -> tuple[str, str] | None:
+        row = self.db.execute("SELECT value, updated_at FROM kv WHERE key = ?", (key,)).fetchone()
+        return (row["value"], row["updated_at"]) if row else None
+
+    def put(self, key: str, value: str) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?, ?)", (key, value, _now()))
 
     def update_task(self, task_id: int, **fields) -> None:
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -186,21 +227,74 @@ class AgentHub:
             log.info("resuming Hermes run %s (task %s)", row["run_id"], row["id"])
             self._watch(row["id"], row["run_id"])
 
-    async def ask(self, task: str) -> int:
-        """Hand a task to Hermes. Returns the task id at once; the answer arrives later in the inbox."""
+    async def _start(self, kind: str, text: str, prompt: str) -> tuple[int, str]:
         if not self.client:
             raise HermesError("the background brain isn't configured")
-        task_id = self.store.add_task(task)
-        prompt = TASK_PROMPT.format(task=task.strip(), today=datetime.now().strftime("%A %B %-d %Y, %-I:%M %p"))
+        task_id = self.store.add_task(text, kind)
         try:
-            run_id = await self.client.start_run(prompt, idempotency_key=f"kai-task-{task_id}")
+            run_id = await self.client.start_run(prompt, idempotency_key=f"kai-{kind}-{task_id}")
         except HermesError as e:
             self.store.update_task(task_id, status="failed", error=str(e))
             raise
         self.store.update_task(task_id, run_id=run_id, status="running")
-        log.info("task %s -> Hermes run %s: %s", task_id, run_id, task[:120])
+        log.info("%s %s -> Hermes run %s: %s", kind, task_id, run_id, text[:120].replace("\n", " "))
+        return task_id, run_id
+
+    async def ask(self, task: str) -> int:
+        """Hand a task to Hermes. Returns the task id at once; the answer arrives later in the inbox."""
+        task_id, run_id = await self._start("task", task, TASK_PROMPT.format(task=task.strip(), today=_today()))
         self._watch(task_id, run_id)
         return task_id
+
+    async def learn(self, transcript: str) -> int:
+        """Give Hermes a finished voice conversation to remember from. Nothing comes back to the inbox."""
+        task_id, run_id = await self._start("memory", transcript,
+                                            MEMORY_PROMPT.format(transcript=transcript, today=_today()))
+        self._watch(task_id, run_id)
+        return task_id
+
+    async def recall(self, question: str, budget_s: float = RECALL_BUDGET_S) -> tuple[str, dict | None] | None:
+        """Ask Hermes's memory. Returns (speak, card) if it answers within the budget; otherwise None, and
+        the answer arrives later as an inbox update."""
+        task_id, run_id = await self._start("recall", question,
+                                            RECALL_PROMPT.format(question=question.strip(), today=_today()))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + budget_s
+        while loop.time() < deadline:
+            await asyncio.sleep(min(1.0, POLL_S))
+            try:
+                run = await self.client.get_run(run_id)
+            except HermesError:
+                continue
+            if run.get("status") == "completed" and run.get("output"):
+                self.store.update_task(task_id, status="done")
+                speak, card, _ = parse_result(run["output"])
+                return speak, card
+            if run.get("status") not in RUNNING:
+                break  # failed fast: let the watcher report it
+        self._watch(task_id, run_id)
+        return None
+
+    def remember_conversation(self, transcript: str) -> None:
+        """Hand a finished conversation to Hermes in the background. It must outlive the Stick's session,
+        which usually ends because the Stick went to sleep."""
+        async def go() -> None:
+            try:
+                await self.learn(transcript)
+            except HermesError as e:
+                log.warning("couldn't hand the conversation to memory: %s", e)
+
+        t = asyncio.create_task(go())
+        self._watchers.add(t)
+        t.add_done_callback(self._watchers.discard)
+
+    def brief(self) -> str | None:
+        got = self.store.get("profile_brief")
+        return got[0] if got else None
+
+    def set_brief(self, text: str) -> None:
+        self.store.put("profile_brief", " ".join(text.split())[:BRIEF_MAX_CHARS])
+        log.info("profile brief updated (%d chars)", len(text))
 
     async def notify(self, speak: str, card: dict | None = None, details_md: str = "", source: str = "hermes",
                      task_id: int | None = None) -> InboxItem:
@@ -246,7 +340,13 @@ class AgentHub:
         else:
             run = {"status": "timeout", "error": "took longer than 15 minutes"}
 
-        task = self.store.task(task_id)["task"]
+        row = self.store.task(task_id)
+        task, kind = row["task"], row["kind"]
+        if kind == "memory":  # learning happens inside Hermes; nothing to tell the owner
+            ok = run.get("status") == "completed"
+            self.store.update_task(task_id, status="done" if ok else "failed", error=None if ok else str(run))
+            log.info("memory %s %s: %s", task_id, "done" if ok else "failed", (run.get("output") or "")[:160])
+            return
         if run.get("status") == "completed" and run.get("output"):
             speak, card, details = parse_result(run["output"])
             self.store.update_task(task_id, status="done")
@@ -258,6 +358,10 @@ class AgentHub:
             await self.notify(f"I couldn't finish the task about {task[:60]}.",
                               {"title": "Task failed", "lines": [task[:26], str(error)[:26]]},
                               f"Task: {task}\n\nError: {error}", source="task", task_id=task_id)
+
+
+def _today() -> str:
+    return datetime.now().strftime("%A %B %-d %Y, %-I:%M %p")
 
 
 def _now() -> str:

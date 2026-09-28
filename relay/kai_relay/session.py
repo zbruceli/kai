@@ -69,6 +69,7 @@ class KaiSession:
         self.hub = ctx.agent if ctx.agent and ctx.agent.enabled else None
         self._to_deliver: list[InboxItem] = []  # background results to speak when Kai is free
         self._delivering: list[int] = []        # inbox ids injected into the current Gemini turn
+        self._transcript: list[str] = []        # this Gemini conversation, handed to memory when it ends
 
         self._live: Any = None  # google.genai AsyncSession
         self._stack: AsyncExitStack | None = None
@@ -234,7 +235,8 @@ class KaiSession:
         return types.LiveConnectConfig.model_validate({
             "response_modalities": ["AUDIO"],
             "system_instruction": system_prompt(self.settings, datetime.now(),
-                                                self.hub.count() if self.hub else None),
+                                                self.hub.count() if self.hub else None,
+                                                self.hub.brief() if self.hub else None),
             "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": self.settings.voice}}},
             "tools": [{"google_search": {}}, {"function_declarations": tools.declarations(self.hub is not None)}],
             "input_audio_transcription": {},
@@ -267,6 +269,14 @@ class KaiSession:
                 log.debug("error closing Gemini session", exc_info=True)
         if live:
             log.info("[%s] Gemini Live session closed", self.device)
+        self._hand_to_memory()
+
+    def _hand_to_memory(self) -> None:
+        """The conversation is over: let the background brain learn from it (only if the owner spoke)."""
+        transcript, self._transcript = self._transcript, []
+        if self.hub and any(line.startswith("Owner:") for line in transcript):
+            self.hub.remember_conversation("\n".join(transcript))
+            log.info("[%s] conversation (%d lines) handed to memory", self.device, len(transcript))
 
     async def _safe_live(self, coro) -> None:
         try:
@@ -302,6 +312,8 @@ class KaiSession:
             calls = msg.tool_call.function_calls or []
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
             for fc, r in zip(calls, results, strict=True):
+                args = ", ".join(f"{k}={v}" for k, v in (fc.args or {}).items())
+                self._transcript.append(f"[Kai used {fc.name}({args})]")
                 if (fc.args or {}).get("place"):
                     self._last_place = fc.args["place"]
                 if r.card:
@@ -337,6 +349,10 @@ class KaiSession:
         if sc.turn_complete:
             if self._heard.strip():
                 log.info("[%s] you: %s", self.device, self._heard.strip())
+                self._transcript.append(f"Owner: {self._heard.strip()}")
+            if self._caption.strip():
+                who = "Kai (passing on a background result)" if self._delivering else "Kai"
+                self._transcript.append(f"{who}: {self._caption.strip()}")
             speech_s = self._audio_bytes / OUT_BYTES_PER_S
             log.info("[%s] kai (%.1fs audio): %s", self.device, speech_s, self._caption.strip() or "-")
             if self._caption.strip() and not self._audio_bytes:

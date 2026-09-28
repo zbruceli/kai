@@ -67,7 +67,7 @@ def tool(name: str, description: str, properties: dict[str, Any], required: list
     return decorator
 
 
-AGENT_TOOLS = {"ask_agent", "check_inbox"}
+AGENT_TOOLS = {"ask_agent", "check_inbox", "recall"}
 
 
 def declarations(with_agent: bool = True) -> list[dict[str, Any]]:
