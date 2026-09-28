@@ -150,9 +150,10 @@ class KaiSession:
                 self.scheduler.watch(self._on_schedule)
                 if m.get("wake") == "timer":
                     # It woke itself to deliver something: fire what's (nearly) due and say it all now.
-                    await self.scheduler.fire_due(within_s=60)
-                    self._to_deliver = self.hub.pending()
-                    log.info("[%s] timer wake: %d update(s) to deliver", self.device, len(self._to_deliver))
+                    await self.scheduler.fire_due(within_s=60)  # these queue themselves as they fire
+                    self._queue_pending()
+                    log.info("[%s] timer wake: %d update(s) to deliver", self.device,
+                             len(self._to_deliver) + len(self._delivering))
                     await self._deliver_next()
                 await self._on_schedule(self.scheduler.next_wake())
             if isinstance(m.get("sleep"), dict):
@@ -396,6 +397,11 @@ class KaiSession:
     async def _on_inbox_count(self, count: int) -> None:
         """Keep the Stick's badge in step with the inbox, whichever way an update got read."""
         await self._send({"type": "inbox", "count": count})
+
+    def _queue_pending(self) -> None:
+        """Queue every waiting update for speaking, except ones already queued or being spoken."""
+        taken = {i.id for i in self._to_deliver} | set(self._delivering)
+        self._to_deliver += [i for i in self.hub.pending() if i.id not in taken]
 
     async def _on_schedule(self, wake) -> None:
         """Tell the Stick when to wake on its own next (it only matters once it deep-sleeps)."""

@@ -123,3 +123,19 @@ def test_schedule_message_to_the_stick():
     asyncio.run(session._on_schedule(datetime.now() + timedelta(minutes=10)))
     asyncio.run(session._on_schedule(None))
     assert 590 <= sent[0]["wake_in_s"] <= 600 and sent[1] == {"type": "schedule", "wake_in_s": 0}
+
+
+def test_timer_wake_queues_each_update_once(tmp_path):
+    from kai_relay.agent import InboxItem
+    from kai_relay.session import KaiSession
+
+    hub, sched, _ = make(tmp_path)
+    a = hub.store.add_item("reminder", "Reminder: move the car", None, "")
+    b = hub.store.add_item("task", "Sunrise spots are ready", None, "")
+    session = KaiSession.__new__(KaiSession)
+    session.hub = hub
+    session._delivering = [a.id]  # already being spoken (it fired as the Stick connected)
+    session._to_deliver = [InboxItem(b.id, b.created_at, "task", b.speak, None, "")]
+    session._queue_pending()
+    session._queue_pending()
+    assert [i.id for i in session._to_deliver] == [b.id]
