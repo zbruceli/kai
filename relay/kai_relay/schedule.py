@@ -24,15 +24,16 @@ QUIET_START, QUIET_END = time(22, 0), time(7, 0)
 
 BRIEFING_PROMPT = """Scheduled briefing {name} for Kai's owner (Kai is their pocket voice assistant).
 Task: {what}
-Use Kai's tools (get_tides, get_weather, get_sun_times) for tides, weather and light, and web search for the
-rest. Then call kai_notify with: summary = one or two short spoken sentences with the highlights (no
+For tides, weather and light you must use Kai's tools (get_tides, get_weather, get_sun_times), not web
+search: they are exact for the place and day. Use web search for the rest. Then call kai_notify with: summary = one or two short spoken sentences with the highlights (no
 markdown, no URLs); card_title of at most 22 characters; card_lines, up to 5 lines of at most 26
 characters; details_md = the full briefing. Then reply "done"."""
 
 WATCH_PROMPT = """Watch {name} for Kai's owner (Kai is their pocket voice assistant).
 Condition to watch for: {condition}
-{until}Check it now. Use Kai's tools (get_weather, get_tides, get_sun_times) where they fit, web search
-otherwise.
+{until}Check it now. For weather, wind, waves, tides, sunrise, sunset and light you must use Kai's tools
+(get_weather, get_tides, get_sun_times), not web search: they are exact for the place and day. Use web
+search only for anything else.
 - If the condition is met: call kai_notify with watch="{name}", a summary of one or two short spoken
   sentences saying what happened, a small card and details_md. Then reply "done".
 - If it is not met: reply exactly [SILENT]."""

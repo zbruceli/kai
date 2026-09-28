@@ -252,8 +252,7 @@ class KaiSession:
     def _live_config(self) -> types.LiveConnectConfig:
         return types.LiveConnectConfig.model_validate({
             "response_modalities": ["AUDIO"],
-            "system_instruction": system_prompt(self.settings, datetime.now(),
-                                                self.hub.count() if self.hub else None,
+            "system_instruction": system_prompt(self.settings, datetime.now(), self._waiting_count(),
                                                 self.hub.brief() if self.hub else None),
             "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": self.settings.voice}}},
             "tools": [{"google_search": {}}, {"function_declarations": tools.declarations(self.hub is not None)}],
@@ -397,6 +396,12 @@ class KaiSession:
     async def _on_inbox_count(self, count: int) -> None:
         """Keep the Stick's badge in step with the inbox, whichever way an update got read."""
         await self._send({"type": "inbox", "count": count})
+
+    def _waiting_count(self) -> int | None:
+        """Updates still waiting to be mentioned: not counting ones this session is about to speak."""
+        if not self.hub:
+            return None
+        return max(0, self.hub.count() - len(self._delivering) - len(self._to_deliver))
 
     def _queue_pending(self) -> None:
         """Queue every waiting update for speaking, except ones already queued or being spoken."""
