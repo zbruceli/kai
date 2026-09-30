@@ -200,3 +200,57 @@ def test_opus_codec_roundtrip():
     pcm = b"".join(dec.decode(p) for p in packets)
     assert abs(len(pcm) // 2 - 16000) < 800                     # back to ~1 s at 16 kHz
     dec.decode(b"\xff\x00garbage")                             # corrupt packets never raise
+
+
+def test_psk_link_round_trip_and_rejections():
+    """The encrypted Stick link: the right key talks; a wrong key, an unknown device or plain TCP never
+    reach the WebSocket handler."""
+    import ssl as ssl_mod
+
+    import pytest
+    from websockets.asyncio.client import connect
+    from websockets.asyncio.server import serve
+
+    from kai_relay import tls
+
+    good = bytes(range(32))
+    ctx = tls.server_context({"kai-test": good})
+    reached = []
+
+    async def handler(ws):
+        reached.append(ws.request.path)
+        await ws.send(await ws.recv())
+
+    async def go():
+        async with serve(handler, "127.0.0.1", 0, ssl=ctx) as server:
+            port = server.sockets[0].getsockname()[1]
+            async with connect(f"wss://127.0.0.1:{port}/ws", ssl=tls.client_context("kai-test", good)) as ws:
+                cipher = ws.transport.get_extra_info("ssl_object").cipher()[0]
+                await ws.send("hi")
+                assert await ws.recv() == "hi"
+            for identity, key in (("kai-test", bytes(32)), ("stranger", good)):
+                with pytest.raises((ssl_mod.SSLError, OSError, EOFError)):
+                    async with connect(f"wss://127.0.0.1:{port}/ws", ssl=tls.client_context(identity, key),
+                                       open_timeout=5):
+                        pass
+            with pytest.raises(Exception):  # plain ws:// to the TLS port
+                async with connect(f"ws://127.0.0.1:{port}/ws", open_timeout=5):
+                    pass
+            return cipher
+
+    cipher = asyncio.run(go())
+    assert cipher.startswith("ECDHE-PSK") and reached == ["/ws"]
+
+
+def test_psk_parsing():
+    import pytest
+
+    from kai_relay import tls
+
+    key = "ab" * 32
+    assert tls.parse_psks(f"kai-4514:{key}, kai-sim:{key}") == {"kai-4514": bytes.fromhex(key),
+                                                               "kai-sim": bytes.fromhex(key)}
+    assert tls.parse_psks("") == {}
+    for bad in (f"kai:{'ab' * 16}", "kai:nothex", f"bad name:{key}", f":{key}"):
+        with pytest.raises(ValueError):
+            tls.parse_psks(bad)

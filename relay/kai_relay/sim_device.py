@@ -3,6 +3,8 @@
     uv run --extra sim kai-sim --host raspberrypi.local
 
 Speaks the same WebSocket protocol as the firmware, so the relay can be tested end-to-end before flashing.
+With KAI_SIM_PSK=identity:hexkey (a key from kai-psk, also listed in the relay's KAI_DEVICE_PSKS) it uses the
+encrypted link on KAI_TLS_PORT, like a Stick.
 """
 
 import argparse
@@ -14,6 +16,8 @@ import threading
 import sounddevice as sd
 from dotenv import load_dotenv
 from websockets.asyncio.client import connect
+
+from . import tls
 
 IN_RATE, OUT_RATE, BLOCK = 16000, 24000, 512
 
@@ -44,7 +48,7 @@ class Speaker:
             self._buf.clear()
 
 
-async def run(host: str, port: int, token: str) -> None:
+async def run(host: str, port: int, token: str, psk: str = "") -> None:
     loop = asyncio.get_running_loop()
     mic_q: asyncio.Queue[bytes] = asyncio.Queue()
     speaker = Speaker()
@@ -57,8 +61,13 @@ async def run(host: str, port: int, token: str) -> None:
     mic = sd.RawInputStream(samplerate=IN_RATE, channels=1, dtype="int16", blocksize=BLOCK, callback=on_mic)
     mic.start()
 
-    uri = f"ws://{host}:{port}/ws"
-    async with connect(uri, additional_headers={"Authorization": f"Bearer {token}"}, max_size=2**20) as ws:
+    tls_ctx = None
+    if psk:  # the encrypted link, like a Stick with a device key
+        identity, key = next(iter(tls.parse_psks(psk).items()))
+        tls_ctx = tls.client_context(identity, key)
+    uri = f"{'wss' if tls_ctx else 'ws'}://{host}:{port}/ws"
+    async with connect(uri, additional_headers={"Authorization": f"Bearer {token}"}, max_size=2**20,
+                       ssl=tls_ctx) as ws:
         await ws.send(json.dumps({"type": "hello", "device": "kai-sim", "fw": "sim", "battery": 100}))
         print(f"Connected to {uri}. Press Enter to talk, Enter again to send. Ctrl-C quits.")
 
@@ -106,7 +115,9 @@ def main() -> None:
     load_dotenv()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=int(os.environ.get("KAI_PORT", "8765")))
+    psk = os.environ.get("KAI_SIM_PSK", "")
+    p.add_argument("--port", type=int, default=int(os.environ.get("KAI_TLS_PORT" if psk else "KAI_PORT",
+                                                                  "8443" if psk else "8765")))
     p.add_argument("--token", default=os.environ.get("KAI_DEVICE_TOKEN", ""))
     p.add_argument("--mic", help="input device name or index (see --list-devices)")
     p.add_argument("--speaker", help="output device name or index")
@@ -118,7 +129,7 @@ def main() -> None:
     as_device = lambda v: int(v) if v and v.isdigit() else v  # noqa: E731
     sd.default.device = (as_device(args.mic), as_device(args.speaker))
     try:
-        asyncio.run(run(args.host, args.port, args.token))
+        asyncio.run(run(args.host, args.port, args.token, psk))
     except KeyboardInterrupt:
         pass
 

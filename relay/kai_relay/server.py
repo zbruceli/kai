@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hmac
 import logging
 import os
@@ -8,7 +9,7 @@ import httpx
 from google import genai
 from websockets.asyncio.server import ServerConnection, serve
 
-from . import mcp_server, tools
+from . import mcp_server, tls, tools
 from .agent import AgentHub, AgentStore
 from .schedule import Scheduler
 from .config import load_settings
@@ -77,13 +78,28 @@ async def run() -> None:
             finally:
                 connections -= 1
 
-        async with serve(handler, settings.host, settings.port, max_size=MAX_MESSAGE, ping_interval=20) as server:
-            log.info("Kai relay listening on ws://%s:%d/ws (model %s)", _lan_ip(), settings.port, settings.model)
+        async with contextlib.AsyncExitStack() as stack:
+            listeners = []
+            if settings.device_psks:
+                ctx_tls = tls.server_context(settings.device_psks)
+                listeners.append(await stack.enter_async_context(serve(
+                    handler, settings.host, settings.tls_port, ssl=ctx_tls, max_size=MAX_MESSAGE, ping_interval=20)))
+                log.info("Kai relay listening on wss://%s:%d/ws (TLS-PSK, %d device key(s); model %s)",
+                         _lan_ip(), settings.tls_port, len(settings.device_psks), settings.model)
+            if settings.allow_plain:
+                listeners.append(await stack.enter_async_context(serve(
+                    handler, settings.host, settings.port, max_size=MAX_MESSAGE, ping_interval=20)))
+                log.info("Kai relay listening on ws://%s:%d/ws (model %s)", _lan_ip(), settings.port, settings.model)
+                if settings.device_psks:
+                    log.warning("plain ws:// is still on (KAI_ALLOW_PLAIN_WS=1): turn it off once every device "
+                                "uses the encrypted link")
+                else:
+                    log.warning("no KAI_DEVICE_PSKS: the link to the Stick is unencrypted (see kai-psk)")
             if settings.home_lat is None:
                 log.warning("KAI_HOME_LAT/LON not set: 'near me' questions will fail")
             if not settings.maps_api_key:
                 log.warning("GOOGLE_MAPS_API_KEY not set: parking search disabled")
-            await server.serve_forever()
+            await asyncio.gather(*(server.serve_forever() for server in listeners))
 
 
 def main() -> None:

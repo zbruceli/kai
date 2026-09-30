@@ -24,7 +24,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.11.1";
+static constexpr const char* FW_VERSION = "0.12.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -117,6 +117,8 @@ static uint32_t loopCount = 0;
 static uint32_t renderBusyUs = 0;
 #endif
 static bool busy = true;  // radio awake + fast CPU
+static bool connectBoost = false;  // busy settings held only for a (re)connect
+static constexpr uint32_t CONNECT_BOOST_MS = 10000;
 
 static bool earlyTalk = false;       // capturing speech before the relay is connected
 static bool earlyTalkEnded = false;  // ...and the button was already released
@@ -540,13 +542,25 @@ static void startRelayConnection() {
       host = ip.toString();
     }
   }
+#ifdef KAI_PSK_HEX
+  // Encrypted and mutually authenticated (TLS 1.2 ECDHE-PSK): an impostor on the Wi-Fi can't complete the
+  // handshake, so the token and the owner's speech never reach it. ~0.2 s at 240 MHz.
+  ws.beginSslWithPsk(host.c_str(), RELAY_TLS_PORT, "/ws", KAI_PSK_IDENTITY, KAI_PSK_HEX);
+#else
+#warning "No KAI_PSK_HEX in secrets.h: the link to the relay is unencrypted"
   ws.begin(host, RELAY_PORT, "/ws");
+#endif
   ws.setExtraHeaders("Authorization: Bearer " KAI_DEVICE_TOKEN);
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(wokeFromSleep ? 1000 : 3000);
   ws.enableHeartbeat(30000, 5000, 2);  // the relay pings every 20 s too; no need to wake the radio more
   wsStarted = true;
   wsBeganAt = millis();
+  if (!busy) {  // the handshake is CPU-bound and has round trips: full speed and an awake radio for it
+    setCpuFrequencyMhz(CPU_MHZ_BUSY);
+    WiFi.setSleep(WIFI_PS_NONE);
+    connectBoost = true;
+  }
   connectedSinceBegin = false;
   if (!earlyTalk) face::setStatusText(wokeFromSleep ? "waking up..." : "finding relay...");
 }
@@ -695,6 +709,13 @@ void loop() {
   M5.update();
   maintainConnection();
   if (wsStarted) ws.loop();
+  if (connectBoost && (wsConnected || millis() - wsBeganAt > CONNECT_BOOST_MS)) {
+    connectBoost = false;
+    if (!busy) {
+      setCpuFrequencyMhz(CPU_MHZ_IDLE);
+      WiFi.setSleep(WIFI_PS_MAX_MODEM);
+    }
+  }
   handleButtons();
 
   uint32_t now = millis();

@@ -81,6 +81,12 @@ void codecPowerDown() {
 
 bool begin() {
   ring = static_cast<uint8_t*>(heap_caps_malloc(RING_BYTES, MALLOC_CAP_SPIRAM));
+  // ~380 ms of mic DMA (default ~64 ms): speech captured while the Stick wakes keeps flowing even when the
+  // loop is blocked for a while, e.g. by the ~0.2 s TLS handshake with the relay.
+  auto mic = M5.Mic.config();
+  mic.dma_buf_len = 256;
+  mic.dma_buf_count = 24;
+  M5.Mic.config(mic);
   M5.Mic.end();
   M5.Speaker.end();
   codecPowerDown();  // nothing plays until Kai has something to say

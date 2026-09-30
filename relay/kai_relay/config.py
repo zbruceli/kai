@@ -1,8 +1,10 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from . import tls
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,11 @@ class Settings:
     hermes_api_key: str | None = None
     mcp_port: int = 8766
     mcp_token: str | None = None
+    # The encrypted link (TLS 1.2, ECDHE-PSK): one pre-shared key per device. With keys set, the plain ws://
+    # listener is off unless KAI_ALLOW_PLAIN_WS=1 (for old firmware or a simulator during a migration).
+    device_psks: dict = field(default_factory=dict)
+    tls_port: int = 8443
+    allow_plain: bool = True
 
     @property
     def imperial(self) -> bool:
@@ -54,6 +61,12 @@ def load_settings() -> Settings:
         raise SystemExit("KAI_MCP_TOKEN is too short; generate one with:\n"
                          "  python3 -c 'import secrets; print(secrets.token_urlsafe(24))'")
 
+    try:
+        device_psks = tls.parse_psks(env.get("KAI_DEVICE_PSKS"))
+    except ValueError as e:
+        raise SystemExit(f"KAI_DEVICE_PSKS: {e}") from None
+    allow_plain = not device_psks or env.get("KAI_ALLOW_PLAIN_WS", "0") == "1"
+
     units = env.get("KAI_UNITS", "imperial").lower()
     if units not in ("imperial", "metric"):
         raise SystemExit("KAI_UNITS must be 'imperial' or 'metric'")
@@ -78,4 +91,7 @@ def load_settings() -> Settings:
         hermes_api_key=env.get("HERMES_API_KEY") or None,
         mcp_port=int(env.get("KAI_MCP_PORT", "8766")),
         mcp_token=mcp_token,
+        device_psks=device_psks,
+        tls_port=int(env.get("KAI_TLS_PORT", "8443")),
+        allow_plain=allow_plain,
     )
