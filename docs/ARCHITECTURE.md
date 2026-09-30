@@ -16,7 +16,16 @@ M5StickS3 (firmware/)            Raspberry Pi or Mac (relay/)                 Go
 
 ## Wire protocol (Stick ⇄ relay)
 
-One WebSocket at `/ws`, authenticated with `Authorization: Bearer <KAI_DEVICE_TOKEN>`. The canonical
+One WebSocket at `/ws`. With device keys configured (the default setup), the transport is
+`wss://…:8443` with TLS 1.2 ECDHE-PSK:
+- **Keys:** a per-device 32-byte pre-shared key (`kai-psk`), so both sides authenticate each other in the
+  handshake.
+- **Forward secrecy:** X25519, so a key leaked later doesn't decrypt recorded traffic.
+- **Cost:** about 0.2 s per reconnect on the Stick (measured).
+- **Firmware:** the WebSockets library gets a small build-time patch
+  (`firmware/scripts/patch_websockets.py`) that adds `beginSslWithPsk`.
+
+Inside, the Stick still sends `Authorization: Bearer <KAI_DEVICE_TOKEN>`. The canonical
 definition is the docstring at the top of `relay/kai_relay/session.py`.
 
 | Direction | Message | Meaning |
@@ -150,7 +159,8 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
   (`firmware/src/secrets.h`, git-ignored).
 - The device token is compared in constant time, and the relay refuses to start with the example
   token.
-- Traffic between the Stick and the relay is plain `ws://`, so keep the relay on a trusted LAN.
+- **Link:** traffic between the Stick and the relay is encrypted and mutually authenticated (TLS-PSK).
+  Without device keys the relay falls back to plain `ws://` and says so at startup.
 - **Text from outside is data, not commands:**
   - Hermes reads the web, so anything it returns can carry prompt injection.
   - Updates are spoken with tools switched off for that turn.

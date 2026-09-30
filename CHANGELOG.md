@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+**Encrypted link between the Stick and the relay** (firmware 0.12.0):
+- TLS 1.2 with ECDHE-PSK on `wss://…:8443`, one 32-byte key per device (`uv run kai-psk <name>`).
+- Both sides prove they hold the key, so nobody on the Wi-Fi can read the audio, pose as the relay or as
+  a Stick, or steal the token. X25519 adds forward secrecy.
+- No certificates, so the Stick needs no clock.
+- **Cost, measured on the Stick:** ~0.2 s per reconnect at 240 MHz, about 0.5% battery a day.
+  Streaming encryption is negligible (AES and SHA-256 run in hardware).
+- With device keys configured, plain `ws://` is off; `KAI_ALLOW_PLAIN_WS=1` keeps it during a
+  migration.
+- **The relay now runs on Python 3.13,** which it needs for PSK.
+- `kai-sim` uses the encrypted link when given `KAI_SIM_PSK`.
+- **Firmware:**
+  - a small build-time patch adds PSK support to the WebSockets library;
+  - it connects at full CPU speed with the radio awake;
+  - mic DMA is raised to ~380 ms, so speech captured while waking survives the handshake.
+- **Tested end to end on the home server:**
+  - a spoken question over `wss://` got its answer, card and memory hand-off;
+  - the Stick reconnects over TLS;
+  - plain `ws://`, a wrong key, an unknown device and a certificate-only TLS client are all refused.
+
 **Security hardening** (from a full audit of the firmware, relay, deployment and history):
 - **Prompt injection from the web:**
   - only a memory run (holding a one-time key) can set Kai's profile brief, which is fenced as facts

@@ -96,7 +96,8 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
 curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/zbruceli/kai ~/kai && cd ~/kai/relay
 cp .env.example .env && chmod 600 .env && nano .env   # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
-uv sync --frozen && uv run kai-relay                  # prints ws://<server-ip>:8765/ws
+uv run kai-psk kai-stick1                             # a device key: KAI_DEVICE_PSKS line into .env
+uv sync --frozen && uv run kai-relay                  # prints wss://<server-ip>:8443/ws
 ```
 - **Keys:** get a Gemini key from [AI Studio](https://aistudio.google.com/apikey). Parking also needs a
   Maps key with Places API (New); everything else works without it.
@@ -111,14 +112,17 @@ uv sync --frozen && uv run kai-relay                  # prints ws://<server-ip>:
 
 **3. Stick.**
 ```bash
-cd firmware && cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, KAI_DEVICE_TOKEN
+cd firmware && cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, token, the kai-psk lines
 pio run -t upload
 ```
 If the port isn't found, hold the side button ~2 s until the green LED blinks (download mode). Builds
-embed your Wi-Fi password and token, so releases are source only; never share a built `firmware.bin`.
+embed your Wi-Fi password, token and device key, so releases are source only; never share a built
+`firmware.bin`. The link to the relay is encrypted and mutually authenticated (TLS-PSK); see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **Without a Stick:** `uv sync --extra sim && uv run kai-sim --host <server-ip>` talks to the relay through
-the Mac's mic and speakers.
+the Mac's mic and speakers. Give it its own key: `KAI_SIM_PSK=kai-sim:<hex>` in `.env`, with the same entry
+in the relay's `KAI_DEVICE_PSKS`.
 
 **Tests:** `cd relay && uv run pytest` (offline). Add `-m network -s` to hit NOAA and Open-Meteo for real.
 `uv run python evals/routing.py` checks which path Gemini Live picks for a set of requests (real Gemini, ~1 min per 30 cases).
