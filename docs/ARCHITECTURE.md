@@ -5,13 +5,13 @@ Kai is split so the pocket device stays simple: the **Stick** handles buttons, a
 
 ```
 M5StickS3 (firmware/)            Raspberry Pi or Mac (relay/)                 Google
-┌──────────────────────┐  ws://  ┌───────────────────────────────┐  wss://   ┌──────────────┐
-│ buttons, mic, speaker├────────▶│ server.py   auth, one session │──────────▶│ Gemini Live  │
-│ face + reply screen  │◀────────┤ session.py  device ⇄ Gemini   │◀──────────┤ + Search     │
-│ deep sleep           │         │ tools/      notes, tides,     │           └──────────────┘
-└──────────────────────┘         │             weather, sun, park├──▶ NOAA, Open-Meteo, Places
-                                 │ backstop.py card safety net   │
-                                 └───────────────────────────────┘
+┌──────────────────────┐ wss:// ┌────────────────────────────────┐  wss://   ┌──────────────┐
+│ buttons, mic, speaker├───────▶│ server.py   TLS-PSK, sessions  │──────────▶│ Gemini Live  │
+│ face + reply screen  │◀───────┤ session.py  device ⇄ Gemini    │◀──────────┤ + Search     │
+│ deep sleep           │ TLS-PSK│ tools/      notes, tides,      │           └──────────────┘
+└──────────────────────┘        │             weather, sun, park ├──▶ NOAA, Open-Meteo, Places
+                                │ backstop.py card safety net    │
+                                └────────────────────────────────┘
 ```
 
 ## Wire protocol (Stick ⇄ relay)
@@ -63,8 +63,8 @@ arrives, so the answer isn't lost.
 
 | File | Role |
 |---|---|
-| `main.cpp` | Modes `Offline → Idle → Listening → Thinking → Reply`, buttons, Wi-Fi/WebSocket, power |
-| `audio.cpp` | Half-duplex ES8311 codec: 3-buffer mic rotation, 2 MB speaker ring, loudness boost |
+| `main.cpp` | Modes `Offline → Idle → Listening → Thinking → Reply`, buttons, Wi-Fi, the TLS-PSK WebSocket, power, timer wakes |
+| `audio.cpp` | Half-duplex ES8311 codec: 3-buffer mic rotation over ~380 ms of DMA, 2 MB speaker ring, loudness boost |
 | `voice_codec.cpp` | Opus (libopus 1.6.1, fixed point): mic encode at complexity 1 (~6.4 ms per 20 ms frame at 240 MHz), speech decode (~3.9 ms) |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
@@ -101,7 +101,7 @@ Gemini Live is the **fast path**: it answers in under 2 s with the tools above. 
 host:
 
 ```
-Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
+Stick ─wss─▶ relay ──▶ Gemini Live          (fast path)
               │ ask_agent ──▶ Hermes API :8642 (POST /v1/runs, polled)   ─┐
               │ ◀── kai_notify, get_tides … ◀── Kai MCP :8766 (localhost) ◀┘ Hermes (Docker, locked down)
               └─ inbox (SQLite): spoken now if a Stick is connected, else a badge
@@ -155,8 +155,9 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
 
 ## Security
 
-- Keys live only on the relay (`relay/.env`, git-ignored). The Stick holds just the device token
-  (`firmware/src/secrets.h`, git-ignored).
+- **API keys** live only on the relay (`relay/.env`, git-ignored). The Stick holds its Wi-Fi password,
+  device token and device key (`firmware/src/secrets.h`, git-ignored). These sit in plain flash, so
+  revoke a lost Stick's key on the relay.
 - The device token is compared in constant time, and the relay refuses to start with the example
   token.
 - **Link:** traffic between the Stick and the relay is encrypted and mutually authenticated (TLS-PSK).

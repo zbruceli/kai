@@ -13,7 +13,7 @@ and a small info card. Quick questions get an answer in about two seconds. Bigge
 
 ```
                       home server
-M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ FAST PATH: answers in ~2 s
+M5StickS3 ──TLS────▶ kai-relay ──▶ Gemini Live ................ FAST PATH: answers in ~2 s
  push-to-talk  Opus │   │          + Google Search, Kai's tools   (tides, weather, light, parking, notes)
  face + cards       │   │
                     │   └─ ask_agent ──▶ Hermes Agent ......... SLOW PATH: seconds to minutes
@@ -29,7 +29,8 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
 | Delivery | spoken now, plus a card | spoken the moment it's ready if the Stick is awake; otherwise a badge, read out on "any updates?" |
 
 - **The Stick stays thin.** It streams Opus audio (~24 kbit/s up, ~32 kbit/s down) over home Wi-Fi,
-  draws the face and cards, and deep-sleeps between uses.
+  draws the face and cards, and deep-sleeps between uses. The link to the relay is encrypted and
+  mutually authenticated (TLS-PSK, one key per device).
 - **The relay** (Python, on any always-on Linux box) bridges the Stick to Gemini Live. It also:
   - runs Kai's own tools: NOAA tides, Open-Meteo weather and marine, golden and blue hour, Google
     Places parking, trip notes;
@@ -37,8 +38,9 @@ M5StickS3 ──Wi-Fi──▶ kai-relay ──▶ Gemini Live ................ 
   - hands slow work to Hermes, and keeps the inbox.
 - **Hermes** runs next to the relay in a pinned Docker container: web search, memory and skills, but no
   shell, file or browser tools, and nothing acts unattended. After each conversation it updates its
-  memory of you and sends Kai a short brief, so Kai starts every conversation already knowing you. It reaches back into Kai through a small MCP
-  server on localhost (`kai_notify` and Kai's data tools).
+  memory of you and sends Kai a short brief, so Kai starts every conversation already knowing you.
+  It reaches back into Kai through a small MCP server on localhost (`kai_notify` and Kai's data tools).
+  Anything it brings back from the web is treated as data, never as instructions.
 
 ## Screens
 
@@ -131,13 +133,18 @@ in the relay's `KAI_DEVICE_PSKS`.
 
 ```
 firmware/src/   main.cpp (modes, buttons, Wi-Fi, sleep) · audio.* (mic, speaker) · voice_codec.* (Opus) · face.* (sprite, cards)
+firmware/scripts/patch_websockets.py   adds TLS-PSK to the WebSockets library at build time
 relay/kai_relay/
+  server.py     listeners (wss:// with TLS-PSK) and device auth
+  tls.py        the encrypted link; `kai-psk` makes device keys
   session.py    Stick <-> Gemini Live bridge; wire protocol at the top
   tools/        fast-path tools, one file each (@tool decorator)
   backstop.py   runs the tool itself when Gemini answers without one, so a card always appears
   agent.py      slow path: hand-off to Hermes, the inbox, the badge
   hermes.py     Hermes API client
+  schedule.py   reminders, briefings, watches, and when the Stick should wake
   mcp_server.py Kai MCP server that Hermes calls back into
+relay/evals/    routing eval: which path Gemini Live picks for a set of requests
 relay/deploy/   systemd unit · hermes/ (pinned compose, configure.sh, SOUL.md)
 ```
 
@@ -151,6 +158,8 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (protocol, tools, security)
 - [x] Slow path, phase 1: hand-off to Hermes, inbox with badge, results spoken when ready
 - [x] Slow path, phase 2: memory across conversations (transcripts to Hermes, a profile brief Kai starts with, `recall`)
 - [x] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
+- [x] Encrypted Stick link (TLS-PSK), security audit and hardening, routing eval
+- [ ] Approvals: a spoken read-back plus a long press before anything with side effects
 - [ ] Remote access: phone as a BLE bridge (GPS for "near me"), or a relay reachable away from home
 - [ ] IMU gestures (lift to wake, shake to hush), OTA updates
 

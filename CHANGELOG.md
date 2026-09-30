@@ -1,68 +1,102 @@
 # Changelog
 
-## Unreleased
+## v0.12.0: encrypted link, security hardening, smarter routing
 
-**Encrypted link between the Stick and the relay** (firmware 0.12.0):
-- TLS 1.2 with ECDHE-PSK on `wss://…:8443`, one 32-byte key per device (`uv run kai-psk <name>`).
-- Both sides prove they hold the key, so nobody on the Wi-Fi can read the audio, pose as the relay or as
-  a Stick, or steal the token. X25519 adds forward secrecy.
-- No certificates, so the Stick needs no clock.
+The Stick now talks to the relay over an encrypted, mutually authenticated link. A full security audit
+hardened the relay and firmware against prompt injection from the web, runaway costs and a misbehaving
+network. Kai also routes between its fast and slow paths more sensibly.
+
+**Upgrade** (the link changes, so the relay and every Stick move together):
+1. **Relay:** `git pull && uv sync --frozen`. It now runs on Python 3.13, which uv installs by itself.
+2. **Keys:** for each Stick, run `uv run kai-psk <name>`:
+   - put its `KAI_DEVICE_PSKS` line in `relay/.env` (comma-separate several devices);
+   - put its two `#define` lines in that Stick's `firmware/src/secrets.h`, together with
+     `RELAY_TLS_PORT 8443` (see `secrets.example.h`).
+3. **During the switch,** set `KAI_ALLOW_PLAIN_WS=1` so Sticks still on 0.11 can connect; restart the
+   relay.
+4. **Firmware:** flash 0.12.0 to each Stick.
+5. **Finish:** remove `KAI_ALLOW_PLAIN_WS` and restart. Only `wss://…:8443` is served.
+6. **With Hermes:** re-run `relay/deploy/hermes/configure.sh`, which applies the new `SOUL.md` and the
+   MCP allow-list.
+
+**Encrypted link**
+- **The protocol:** TLS 1.2 with ECDHE-PSK (X25519) on `wss://…:8443`, and one 32-byte key per device.
+- **What it gives:**
+  - both sides prove they hold the key, so nobody on the Wi-Fi can read the audio, pose as the relay
+    or a Stick, or steal the token;
+  - forward secrecy, so a key leaked later doesn't decrypt past traffic;
+  - no certificates, so the Stick needs no clock;
+  - revoking a Stick means deleting its key line.
 - **Cost, measured on the Stick:** ~0.2 s per reconnect at 240 MHz, about 0.5% battery a day.
-  Streaming encryption is negligible (AES and SHA-256 run in hardware).
-- With device keys configured, plain `ws://` is off; `KAI_ALLOW_PLAIN_WS=1` keeps it during a
-  migration.
-- **The relay now runs on Python 3.13,** which it needs for PSK.
-- `kai-sim` uses the encrypted link when given `KAI_SIM_PSK`.
+  Streaming encryption is negligible, because AES and SHA-256 run in hardware.
 - **Firmware:**
-  - a small build-time patch adds PSK support to the WebSockets library;
-  - it connects at full CPU speed with the radio awake;
-  - mic DMA is raised to ~380 ms, so speech captured while waking survives the handshake.
-- **Tested end to end on the home server:**
-  - a spoken question over `wss://` got its answer, card and memory hand-off;
-  - the Stick reconnects over TLS;
-  - plain `ws://`, a wrong key, an unknown device and a certificate-only TLS client are all refused.
+  - a build-time patch (`firmware/scripts/patch_websockets.py`) adds PSK to the pinned WebSockets
+    library;
+  - connecting runs at full CPU speed with the radio awake;
+  - mic DMA goes up to ~380 ms, so speech captured while waking survives the handshake.
+- **`kai-sim`** uses the encrypted link when given `KAI_SIM_PSK`.
 
-**Security hardening** (from a full audit of the firmware, relay, deployment and history):
+**Security hardening** (from an audit of the firmware, relay, deployment and git history):
 - **Prompt injection from the web:**
-  - only a memory run (holding a one-time key) can set Kai's profile brief, which is fenced as facts
-    in the prompt;
+  - only a memory run, which holds a one-time key, can set Kai's profile brief, and the brief is
+    fenced as facts in the prompt;
   - updates are spoken with tools switched off;
   - memory learns from the owner's own lines only;
-  - only a watch's own job (holding its key) can stop it;
+  - a watch can be stopped only by its own job;
   - Hermes no longer gets the owner's notes.
 - **Cost limits:**
   - hourly caps on Hermes runs and on `kai_notify`;
-  - briefings and watches at most hourly, at most 10 active, watches at most 14 days;
+  - briefings and watches no more than hourly, at most 10 active, watches for 14 days at most;
   - at most 50 pending reminders, up to a month ahead.
 - **Robustness:**
-  - two briefings or watches created in one turn no longer share a name (which left an untracked
-    Hermes job running);
+  - two briefings or watches created in one turn no longer share a name (that left an untracked Hermes
+    job running);
   - a malformed Hermes reply can't wedge a task;
-  - Hermes errors stay out of spoken answers and cards.
-- **Device link:**
+  - Hermes errors stay out of what Kai says and shows.
+- **Device input:**
   - audio accepted only while the button is held;
   - 64 KiB messages and at most 128 Opus packets per message;
-  - one connection per device and 4 in total;
-  - device names and telemetry are validated (no CSV formula or log injection);
+  - one connection per device, 4 in total;
+  - device names and telemetry are validated (no CSV-formula or log injection);
   - a bad message no longer drops the connection.
-- **Files:** the relay writes its files owner-only (umask 077); note text is kept to one line.
-- **Firmware 0.11.1:**
-  - **Fix:** a real timer wake now tells the relay it woke on a timer (a flag was set one line early, so
-    due reminders weren't fired early and waiting updates weren't spoken);
+- **The relay's files** are owner-only (umask 077).
+- **Firmware:**
   - timer wakes have a 30 s floor and stop after 12 in a row with no button press;
-  - a reply that runs 3 minutes with no press is dropped;
+  - a reply that runs 3 minutes with no press is cut off;
   - caption text is capped at 2 KB;
   - no chime while listening or hushed;
-  - dependencies pinned to exact versions and a platform release.
+  - dependencies are pinned to exact versions and a platform release.
 
-- **Better fast/slow routing.** Kai now decides by what a good answer needs, not by trigger words:
-  - explicit requests ("research", "tell me later") always hand off, and Kai never promises to report
-    back without actually starting the task;
-  - for thin or local "what's new" answers, Kai answers and then offers "Want me to dig into it?";
-  - "set a timer", "alarm" and "wake me in…" reach `remind`, and `recall` no longer claims "remind me".
-- **Routing eval** (`relay/evals/routing.py`): replays requests through Gemini Live with the relay's
-  prompt and tools, and scores the path it picks. On 104 cases × 3 runs: 90% → 94%. Dig-deeper cases
-  went from 56% to 87%, explicit hand-offs from 94% to 100%, and false hand-offs from 3 to 0.
+**Fixes**
+- **Timer wakes now work on a real Stick.** The Stick never told the relay it had woken on a timer: a
+  flag was set one line early. So due reminders weren't fired early and waiting updates weren't spoken.
+  Phase 3's tests used a simulated Stick, which is why they missed it.
+- **A reminder, note or task is confirmed once.** Gemini Live sometimes repeated the confirmation, and
+  the relay now drops the repeat.
+
+**Fast/slow routing**
+- **Kai decides by what a good answer needs, not by trigger words:**
+  - "research" or "tell me later" always hand off, and Kai never promises a report without starting
+    the task;
+  - a thin or local "what's new" answer ends with "Want me to dig into it?";
+  - "set a timer", "alarm" and "wake me in…" reach `remind`.
+- **A routing eval** (`relay/evals/routing.py`) replays requests through Gemini Live and scores the
+  path it picks. On 104 cases × 3 runs:
+
+  | | Before | After |
+  |---|---|---|
+  | Overall | 90% | 94% |
+  | Needs digging deeper | 56% | 87% |
+  | Explicit hand-offs | 94% | 100% |
+  | False hand-offs | 3 | 0 |
+
+**Tested on the home server and the real Stick:**
+- spoken questions over `wss://`;
+- press-and-talk from deep sleep: the start of the sentence comes through intact over TLS;
+- a 5-minute timer woke the sleeping Stick on battery and was spoken;
+- plain `ws://`, a wrong key, an unknown device and a certificate-only TLS client were all refused;
+- an injected "rewrite the brief" was refused by Hermes and, called directly, by the relay;
+- 47 relay tests pass.
 
 ## v0.11.0: background brain
 

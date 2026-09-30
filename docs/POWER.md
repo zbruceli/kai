@@ -95,6 +95,15 @@ them:
 - **Faster wakes:** a static IP would skip DHCP.
 - **Near-zero sleep:** a PM1 power-off with IMU motion wake would draw 14–52 µA and give "pick it up to wake".
 
+## Encrypted link (firmware 0.12)
+
+TLS 1.2 with ECDHE-PSK, measured on the Stick with the handshake at 240 MHz:
+- **Per reconnect after deep sleep:** ~0.2 s and ~0.008 mAh, about 0.5% of a question's energy, or
+  about 0.5% of a day's.
+- **Streaming:** encrypting the audio is negligible. AES and SHA-256 run in hardware: ~0.1 ms per 20 ms
+  audio packet.
+- **At 80 MHz** the handshake takes ~2.7× longer, so the firmware runs it at full speed.
+
 ## Measuring it
 
 Release firmware sends no telemetry. For measurements, flash a measurement build from `firmware/`:

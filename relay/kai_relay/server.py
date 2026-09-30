@@ -4,6 +4,7 @@ import hmac
 import logging
 import os
 import socket
+from importlib.metadata import version
 
 import httpx
 from google import genai
@@ -37,7 +38,7 @@ async def run() -> None:
     notes = tools.NotesStore(settings.data_dir / "kai.db", settings.notes_dir)
     expected_auth = f"Bearer {settings.device_token}"
 
-    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "kai-relay/0.9"}) as http:
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": f"kai-relay/{version('kai-relay')}"}) as http:
         hermes = None
         if settings.hermes_url and settings.hermes_api_key:
             hermes = HermesClient(settings.hermes_url, settings.hermes_api_key, http)
