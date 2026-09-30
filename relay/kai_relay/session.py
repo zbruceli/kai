@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 import unicodedata
 from contextlib import AsyncExitStack
@@ -59,6 +60,20 @@ _ASCII = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '
 
 def screen_text(text: str) -> str:
     return unicodedata.normalize("NFKD", text.translate(_ASCII)).encode("ascii", "ignore").decode()
+
+
+# One live connection per device: a reconnect replaces the old one instead of piling up Gemini sessions.
+_ACTIVE: dict[str, "KaiSession"] = {}
+
+
+def device_name(value) -> str:
+    """The device's self-reported name, safe for logs and file names."""
+    name = re.sub(r"[^\w-]", "", str(value or ""))[:32]
+    return name or "?"
+
+
+def _short(value) -> str:
+    return re.sub(r"[^\w.%-]", "", str(value))[:16]
 
 
 class KaiSession:
@@ -108,20 +123,28 @@ class KaiSession:
         try:
             async for msg in self.ws:
                 self._last_activity = time.monotonic()
-                if isinstance(msg, bytes):
-                    await self._on_mic(self._decode_mic(msg))
-                    continue
                 try:
-                    control = json.loads(msg)
-                except ValueError:
-                    control = None
-                if isinstance(control, dict):
-                    await self._on_control(control)
-                else:
-                    log.warning("[%s] ignoring malformed message", self.device)
+                    if isinstance(msg, bytes):
+                        if self._ptt:  # audio only counts while the button is held
+                            await self._on_mic(self._decode_mic(msg))
+                        continue
+                    try:
+                        control = json.loads(msg)
+                    except ValueError:
+                        control = None
+                    if isinstance(control, dict):
+                        await self._on_control(control)
+                    else:
+                        log.warning("[%s] ignoring malformed message", self.device)
+                except ConnectionClosed:
+                    raise
+                except Exception:  # one bad message costs that message, not the connection
+                    log.exception("[%s] message handling failed", self.device)
         except ConnectionClosed:
             pass
         finally:
+            if _ACTIVE.get(self.device) is self:
+                del _ACTIVE[self.device]
             if self.hub:
                 self.hub.unsubscribe(self._on_inbox_item)
                 self.hub.unwatch_count(self._on_inbox_count)
@@ -136,13 +159,18 @@ class KaiSession:
     async def _on_control(self, m: dict) -> None:
         kind = m.get("type")
         if kind == "hello":
-            self.device = m.get("device", "?")
+            self.device = device_name(m.get("device"))
+            old = _ACTIVE.get(self.device)
+            if old is not None and old is not self:
+                log.info("[%s] replaces its previous connection", self.device)
+                self._tasks.add(asyncio.create_task(old.ws.close(4000, "replaced by a new connection")))
+            _ACTIVE[self.device] = self
             if "opus" in (m.get("codecs") or []):
                 self._opus_up = opus.Decoder(16000)
                 self._opus_down = opus.Encoder(24000, OPUS_DOWN_BITRATE)
             # No reply needed: the device shows idle itself, and a "state: idle" here would knock it out of
             # Thinking when it replays speech captured while waking from deep sleep.
-            log.info("[%s] hello fw=%s battery=%s%% audio=%s", self.device, m.get("fw"), m.get("battery"),
+            log.info("[%s] hello fw=%s battery=%s%% audio=%s", self.device, _short(m.get("fw")), _short(m.get("battery")),
                      "opus" if self._opus_down else "pcm")
             if self.hub:
                 self.hub.subscribe(self._on_inbox_item)
@@ -159,13 +187,13 @@ class KaiSession:
                     await self._deliver_next()
                 await self._on_schedule(self.scheduler.next_wake())
             if isinstance(m.get("sleep"), dict):
-                sl = m["sleep"]
-                self.power.write(self.device, "sleep", **sl)
-                ma = sleep_estimate_ma(sl.get("slept_s", 0), sl.get("mv_before", 0), sl.get("mv_after", 0))
-                log.info("[%s] woke after %.1f h asleep, %s -> %s mV%s", self.device, sl.get("slept_s", 0) / 3600,
-                         sl.get("mv_before"), sl.get("mv_after"), f" (~{ma:.2f} mA)" if ma is not None else "")
+                sl = self.power.write(self.device, "sleep", m["sleep"])
+                slept, before, after = sl.get("slept_s", 0), sl.get("mv_before", 0), sl.get("mv_after", 0)
+                ma = sleep_estimate_ma(slept, before, after)
+                log.info("[%s] woke after %.1f h asleep, %s -> %s mV%s", self.device, slept / 3600,
+                         before, after, f" (~{ma:.2f} mA)" if ma is not None else "")
         elif kind == "power":
-            self.power.write(self.device, "report", **{k: v for k, v in m.items() if k != "type"})
+            self.power.write(self.device, "report", m)
         elif kind == "ptt_start":
             self._ptt = True
             if self.hub:
@@ -328,8 +356,17 @@ class KaiSession:
             log.info("[%s] Gemini will close this session soon (time left %s)", self.device, msg.go_away.time_left)
 
         if msg.tool_call:
-            await self._send({"type": "state", "state": "thinking"})
             calls = msg.tool_call.function_calls or []
+            if self._delivering:
+                # A delivery turn passes on text from outside (Hermes, the web): it must not act. The owner
+                # can ask for anything it suggests themselves.
+                log.warning("[%s] ignoring %s during an update", self.device, ", ".join(fc.name for fc in calls))
+                await live.send_tool_response(function_responses=[
+                    types.FunctionResponse(id=fc.id, name=fc.name, response={
+                        "error": "Tools are off while passing on an update. Just say the update."})
+                    for fc in calls])
+                return
+            await self._send({"type": "state", "state": "thinking"})
             results = await asyncio.gather(*(tools.call(fc.name, fc.args or {}, self.ctx) for fc in calls))
             self._confirmed = False  # a new result deserves to be heard
             self._acted = self._acted or any(

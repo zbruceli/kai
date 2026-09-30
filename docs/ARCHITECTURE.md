@@ -115,7 +115,8 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
 - **Memory:**
   - each Gemini Live conversation is transcribed (owner, Kai, tool calls);
   - when it closes, it goes to Hermes as a *memory* run, which produces no inbox item;
-  - Hermes updates its memory and calls `kai_profile_brief`;
+  - Hermes updates its memory and calls `kai_profile_brief` with a one-time key that only that memory
+    run gets, so no other run (one that read a hostile web page, say) can rewrite the brief;
   - the relay stores the brief (≤ 800 chars) and puts it in the system prompt of every new
     conversation;
   - `recall` asks Hermes's memory and past sessions, with an 8 s budget before falling back to the
@@ -126,7 +127,8 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
     works out the date. A 15 s loop fires them into the inbox.
   - **Briefings and watches** are Hermes cron jobs named `kai-brief-N` / `kai-watch-N`, with Hermes
     parsing the schedule. They must use Kai's tools for tides, weather and light.
-  - A watch replies `[SILENT]` until its condition holds, then calls `kai_notify(watch=…)`, and the relay
+  - A watch replies `[SILENT]` until its condition holds, then calls `kai_notify(watch=…)` with a key
+    that's only in its own prompt, and the relay
     deletes the job. Hermes jobs can't remove themselves while `cron.allow_agent_scheduling` stays
     `false`, which it does.
   - `next_wake` is the earliest pending reminder, or a job's next run + 6 min; for watches it's pushed
@@ -149,3 +151,17 @@ Stick ─ws─▶ relay ──▶ Gemini Live           (fast path, unchanged)
 - The device token is compared in constant time, and the relay refuses to start with the example
   token.
 - Traffic between the Stick and the relay is plain `ws://`, so keep the relay on a trusted LAN.
+- **Text from outside is data, not commands:**
+  - Hermes reads the web, so anything it returns can carry prompt injection.
+  - Updates are spoken with tools switched off for that turn.
+  - The brief is fenced as facts, and only a memory run can set it.
+  - The memory prompt learns only from the owner's own lines.
+  - `check_inbox` hands Gemini the short summaries only.
+- **Limits:**
+  - Per hour: 20 tasks, 20 recalls, 12 memory runs, 20 `kai_notify` updates.
+  - At most 10 briefings and watches, checked no more than hourly; watches last at most 14 days.
+  - At most 50 pending reminders, set up to 31 days ahead.
+  - At most 4 device connections, one per device.
+  - 64 KiB messages; audio is accepted only while the button is held.
+- **The Stick** limits timer wakes (30 s minimum, and at most 12 in a row without a button press), cuts off
+  any reply that runs 3 minutes without a press, and caps caption text at 2 KB.

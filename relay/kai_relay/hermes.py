@@ -4,6 +4,8 @@ Only the parts Kai uses: start a background run, poll it, and check health. Herm
 bound to localhost, authenticated with API_SERVER_KEY.
 """
 
+from urllib.parse import quote
+
 import httpx
 
 # Statuses that mean "still working"; anything else is final.
@@ -47,7 +49,7 @@ class HermesClient:
 
     async def get_run(self, run_id: str) -> dict:
         try:
-            r = await self.http.get(f"{self.base_url}/v1/runs/{run_id}", headers=self.headers, timeout=30)
+            r = await self.http.get(f"{self.base_url}/v1/runs/{quote(str(run_id), safe='')}", headers=self.headers, timeout=30)
         except httpx.HTTPError as e:
             raise HermesError(f"Hermes unreachable: {e}") from e
         if r.status_code == 404:
@@ -78,7 +80,7 @@ class HermesClient:
 
     async def delete_job(self, job_id: str) -> bool:
         try:
-            r = await self.http.delete(f"{self.base_url}/api/jobs/{job_id}", headers=self.headers, timeout=15)
+            r = await self.http.delete(f"{self.base_url}/api/jobs/{quote(str(job_id), safe='')}", headers=self.headers, timeout=15)
         except httpx.HTTPError as e:
             raise HermesError(f"Hermes unreachable: {e}") from e
         return r.status_code < 400

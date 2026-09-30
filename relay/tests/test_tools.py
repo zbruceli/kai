@@ -168,8 +168,13 @@ def test_power_estimates(tmp_path):
     seg = Segment(("d", "idle", "90", "True"), [i * 60 for i in range(31)], [3950 - i for i in range(31)])
     minutes, ma = seg.estimate()
     assert minutes == 30 and 15 < ma < 25                                # 30 mV in 30 min near 3.93 V = ~19 mA
-    PowerLog(tmp_path).write("kai-1", "report", mode="idle", mv=3900, bogus=1)
+    PowerLog(tmp_path).write("kai-1", "report", {"mode": "idle", "mv": 3900, "bogus": 1})
     assert (tmp_path / "power.csv").read_text().splitlines()[0].startswith("ts,device,kind,mode")
+    # A device can't inject formulas, override the timestamp or crash the writer.
+    clean = PowerLog(tmp_path).write("kai-1", "report", {"mode": "=HYPERLINK(x)", "ts": "0", "device": "x",
+                                                        "kind": "y", "mv": "3900; rm", "rssi": float("nan")})
+    assert clean == {"mode": "HYPERLINKx"}
+    assert "=" not in (tmp_path / "power.csv").read_text()
 
 
 def test_opus_bundle_roundtrip():

@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import logging
+import os
 import socket
 
 import httpx
@@ -15,6 +16,9 @@ from .hermes import HermesClient
 from .session import KaiSession
 
 log = logging.getLogger("kai")
+
+MAX_CONNECTIONS = 4   # Sticks plus a simulator; each one costs a Gemini Live session
+MAX_MESSAGE = 64 * 1024  # the Stick sends at most 4 KB; raw-PCM clients a few KB per frame
 
 
 def _lan_ip() -> str:
@@ -51,7 +55,10 @@ async def run() -> None:
             else:
                 log.warning("KAI_MCP_TOKEN not set: Hermes can't reach back into Kai (kai_notify, data tools)")
 
+        connections = 0
+
         async def handler(ws: ServerConnection) -> None:
+            nonlocal connections
             if ws.request.path != "/ws":
                 await ws.close(1008, "unknown path")
                 return
@@ -59,10 +66,18 @@ async def run() -> None:
                 log.warning("rejected device from %s: bad token", ws.remote_address)
                 await ws.close(1008, "unauthorized")
                 return
+            if connections >= MAX_CONNECTIONS:
+                log.warning("rejected device from %s: %d connections already", ws.remote_address, connections)
+                await ws.close(1013, "too many connections")
+                return
             log.info("device connected from %s", ws.remote_address[0])
-            await KaiSession(ws, client, ctx, settings).run()
+            connections += 1
+            try:
+                await KaiSession(ws, client, ctx, settings).run()
+            finally:
+                connections -= 1
 
-        async with serve(handler, settings.host, settings.port, max_size=2**20, ping_interval=20) as server:
+        async with serve(handler, settings.host, settings.port, max_size=MAX_MESSAGE, ping_interval=20) as server:
             log.info("Kai relay listening on ws://%s:%d/ws (model %s)", _lan_ip(), settings.port, settings.model)
             if settings.home_lat is None:
                 log.warning("KAI_HOME_LAT/LON not set: 'near me' questions will fail")
@@ -72,6 +87,7 @@ async def run() -> None:
 
 
 def main() -> None:
+    os.umask(0o077)  # notes, databases and logs the relay writes are the owner's alone
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:

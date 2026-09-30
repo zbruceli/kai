@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+**Security hardening** (from a full audit of the firmware, relay, deployment and history):
+- **Prompt injection from the web:**
+  - only a memory run (holding a one-time key) can set Kai's profile brief, which is fenced as facts
+    in the prompt;
+  - updates are spoken with tools switched off;
+  - memory learns from the owner's own lines only;
+  - only a watch's own job (holding its key) can stop it;
+  - Hermes no longer gets the owner's notes.
+- **Cost limits:**
+  - hourly caps on Hermes runs and on `kai_notify`;
+  - briefings and watches at most hourly, at most 10 active, watches at most 14 days;
+  - at most 50 pending reminders, up to a month ahead.
+- **Robustness:**
+  - two briefings or watches created in one turn no longer share a name (which left an untracked
+    Hermes job running);
+  - a malformed Hermes reply can't wedge a task;
+  - Hermes errors stay out of spoken answers and cards.
+- **Device link:**
+  - audio accepted only while the button is held;
+  - 64 KiB messages and at most 128 Opus packets per message;
+  - one connection per device and 4 in total;
+  - device names and telemetry are validated (no CSV formula or log injection);
+  - a bad message no longer drops the connection.
+- **Files:** the relay writes its files owner-only (umask 077); note text is kept to one line.
+- **Firmware 0.11.1:**
+  - **Fix:** a real timer wake now tells the relay it woke on a timer (a flag was set one line early, so
+    due reminders weren't fired early and waiting updates weren't spoken);
+  - timer wakes have a 30 s floor and stop after 12 in a row with no button press;
+  - a reply that runs 3 minutes with no press is dropped;
+  - caption text is capped at 2 KB;
+  - no chime while listening or hushed;
+  - dependencies pinned to exact versions and a platform release.
+
 - **Better fast/slow routing.** Kai now decides by what a good answer needs, not by trigger words:
   - explicit requests ("research", "tell me later") always hand off, and Kai never promises to report
     back without actually starting the task;

@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 
 from ..hermes import HermesError
+from ..schedule import MAX_WATCH_DAYS, ScheduleLimit
 from .days import DAY_PARAM, resolve_day
 from .registry import ToolContext, ToolError, ToolResult, card, short_time, tool
 
@@ -53,7 +54,10 @@ async def remind(ctx: ToolContext, text: str, in_minutes: int | None = None, at:
             raise ToolError("That time has already passed.")
     else:
         raise ToolError("When should I remind you?")
-    rid = await sched.add_reminder(text.strip(), due)
+    try:
+        rid = await sched.add_reminder(text.strip(), due)
+    except ScheduleLimit as e:
+        raise ToolError(str(e)) from e
     return ToolResult({"reminder_id": rid, "when": _when(due), "tell_user": "Confirm the reminder and its time briefly."},
                       card("Reminder set", [text[:26], _when(due)]))
 
@@ -73,8 +77,10 @@ async def schedule_briefing(ctx: ToolContext, what: str, when: str) -> ToolResul
     sched = _scheduler(ctx)
     try:
         job = await sched.add_briefing(what.strip(), when.strip())
+    except ScheduleLimit as e:
+        raise ToolError(str(e)) from e
     except HermesError as e:
-        raise ToolError(f"I couldn't schedule that ({e}).") from e
+        raise ToolError("I couldn't schedule that; my background brain didn't accept it.") from e
     nxt = _when(job["next_run"]) if job["next_run"] else "soon"
     return ToolResult({"scheduled": job["schedule"], "first": nxt, "tell_user": "Confirm what and when briefly."},
                       card("Briefing set", [what[:26], job["schedule"][:26], f"First: {nxt}"]))
@@ -100,8 +106,11 @@ async def watch_for(ctx: ToolContext, condition: str, how_often: str = "every 3h
     until = datetime.combine(last, datetime.min.time())
     try:
         job = await sched.add_watch(condition.strip(), how_often.strip() or "every 3h", until)
+    except ScheduleLimit as e:
+        raise ToolError(str(e)) from e
     except HermesError as e:
-        raise ToolError(f"I couldn't set up that watch ({e}).") from e
+        raise ToolError("I couldn't set up that watch; my background brain didn't accept it.") from e
+    last = min(last, today + timedelta(days=MAX_WATCH_DAYS))
     return ToolResult({"watching": condition, "checks": job["schedule"], "until": f"{last:%A %B %-d}",
                        "tell_user": "Confirm you'll keep an eye on it and tell them once it happens."},
                       card("Watching", [condition[:26], job["schedule"][:26], f"Until {last:%a %-m/%-d}"]))

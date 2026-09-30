@@ -441,7 +441,11 @@ void setReplyCard(const Card& card) {
 }
 
 void appendReplyText(const String& text) {
-  replyText += text;
+  // Spoken answers are a few hundred characters. A cap keeps a runaway caption stream from eating the heap
+  // and making every re-wrap slower (the whole text is wrapped again on each change).
+  static constexpr size_t MAX_REPLY_CHARS = 2048;
+  if (replyText.length() >= MAX_REPLY_CHARS) return;
+  replyText += text.substring(0, MAX_REPLY_CHARS - replyText.length());
   linesDirty = dirty = true;
 }
 

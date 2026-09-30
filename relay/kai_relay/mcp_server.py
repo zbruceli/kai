@@ -3,8 +3,9 @@
 Hermes can't POST to arbitrary URLs (its webhooks are inbound only), but it is an MCP client. This server
 runs inside the relay's event loop on 127.0.0.1, behind a bearer token, and offers:
   - kai_notify: put an update in the owner's inbox (spoken now if a Stick is connected, badge otherwise)
-  - Kai's fast data tools, read-only (tides, weather, light, notes), so Hermes reuses them instead of
-    re-scraping.
+  - Kai's fast data tools, read-only (tides, weather, light), so Hermes reuses them instead of re-scraping.
+    The owner's notes are deliberately not offered: any Hermes run reads web pages, and an injected one
+    could leak them into searches.
 """
 
 import hmac
@@ -34,26 +35,26 @@ def build(ctx: tools.ToolContext, hub: AgentHub) -> MCPServer:
         "Send the owner an update through Kai. It is spoken aloud if Kai is awake, otherwise it waits in "
         "Kai's inbox with a badge. `summary`: one or two short spoken sentences, no markdown or URLs. "
         "`card_title` (<= 22 chars) and `card_lines` (<= 5 lines of <= 26 chars) are shown on the screen. "
-        "`details_md` holds the full text. From a watch job whose condition was met, pass `watch` = the watch's "
-        "name (e.g. kai-watch-3) so it stops."
+        "`details_md` holds the full text. From a watch job whose condition was met, pass `watch` = the exact "
+        "watch key given in that job's instructions, so it stops."
     ))
     async def kai_notify(summary: str, card_title: str = "", card_lines: list[str] | None = None,
                          details_md: str = "", watch: str = "") -> str:
-        card = None
-        if card_title or card_lines:
-            card = {"title": (card_title or "Update")[:22], "lines": [str(x)[:26] for x in (card_lines or [])][:5]}
-        item = await hub.notify(summary.strip()[:400], card, details_md, source="watch" if watch else "hermes")
-        if watch and ctx.scheduler:
-            await ctx.scheduler.watch_fired(watch.strip())
-        return f"queued as update {item.id}" + (f"; {watch} stopped" if watch else "")
+        if not hub.notify_allowed():
+            log.warning("kai_notify refused: too many updates this hour")
+            return "refused: too many updates this hour"
+        card = {"title": card_title, "lines": card_lines or []} if card_title or card_lines else None
+        item = await hub.notify(str(summary), card, str(details_md), source="watch" if watch else "hermes")
+        stopped = bool(watch) and ctx.scheduler is not None and await ctx.scheduler.watch_fired(str(watch))
+        return f"queued as update {item.id}" + ("; watch stopped" if stopped else "")
 
     @mcp.tool(description=(
         "Replace the short brief Kai's voice starts every conversation with: at most 800 characters of plain "
-        "sentences about the owner (most useful facts first). Call it after updating your memory."
+        "factual sentences about the owner (most useful facts first). Only for memory updates after a "
+        "conversation, with the one-time `key` given in those instructions; any other call is refused."
     ))
-    async def kai_profile_brief(brief: str) -> str:
-        hub.set_brief(brief)
-        return "brief updated"
+    async def kai_profile_brief(brief: str, key: str = "") -> str:
+        return "brief updated" if hub.set_brief(brief, key) else "refused: missing or expired key"
 
     async def data(name: str, args: dict) -> dict:
         result = await tools.call(name, {k: v for k, v in args.items() if v is not None}, ctx)
@@ -72,10 +73,6 @@ def build(ctx: tools.ToolContext, hub: AgentHub) -> MCPServer:
     async def get_sun_times(place: str | None = None, day: str | None = None) -> dict:
         return await data("get_sun_times", {"place": place, "day": day})
 
-    @mcp.tool(description="The owner's recent trip notes, optionally for one trip.")
-    async def list_notes(trip: str | None = None, limit: int = 5) -> dict:
-        return await data("list_notes", {"trip": trip, "limit": limit})
-
     return mcp
 
 
@@ -86,6 +83,8 @@ class _BearerAuth:
         self.app, self.expected = app, f"Bearer {token}".encode()
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "lifespan"):
+            return  # nothing but plain HTTP is served (no websockets)
         if scope["type"] == "http":
             auth = dict(scope.get("headers") or []).get(b"authorization", b"")
             if not hmac.compare_digest(auth, self.expected):

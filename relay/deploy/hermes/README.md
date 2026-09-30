@@ -4,8 +4,9 @@ Kai's voice (Gemini Live, via the relay) answers quick questions itself and hand
 planning, several searches) to **Hermes Agent** running on the same machine:
 
 - **Relay → Hermes:** Hermes's API server on `127.0.0.1:8642`, used to start and poll background runs.
-- **Hermes → Kai:** the relay's MCP server on `127.0.0.1:8766`: `kai_notify`, `kai_profile_brief` and Kai's tide, weather,
-  light and notes tools.
+- **Hermes → Kai:** the relay's MCP server on `127.0.0.1:8766`: `kai_notify`, `kai_profile_brief` and Kai's tide, weather
+  and light tools. The owner's notes aren't offered: any run reads web pages, and an injected one could leak
+  them into searches.
 
 Finished results are spoken at once if a Stick is awake, and otherwise wait in an inbox (a badge on the
 Stick). Nothing listens on the LAN.

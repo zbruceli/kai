@@ -26,7 +26,7 @@ set_ updates.check false
 # The Kai MCP server inside the relay (token from ~/kai-hermes/.env, never written into config.yaml).
 set_ mcp_servers.kai.url "http://127.0.0.1:8766/mcp"
 set_ mcp_servers.kai.headers.Authorization 'Bearer ${KAI_MCP_TOKEN}'
-set_ mcp_servers.kai.tools.include "[kai_notify, kai_profile_brief, get_tides, get_weather, get_sun_times, list_notes]"
+set_ mcp_servers.kai.tools.include "[kai_notify, kai_profile_brief, get_tides, get_weather, get_sun_times]"
 set_ mcp_servers.kai.prompts false
 set_ mcp_servers.kai.resources false
 

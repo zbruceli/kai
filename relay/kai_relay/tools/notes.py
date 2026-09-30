@@ -76,6 +76,8 @@ class NotesStore:
 
     def _append_markdown(self, trip: str, now: datetime, text: str, tags: str) -> None:
         path = self.markdown_path(trip)
+        # One line per note: spoken text can't add headings or fake entries to the Markdown file.
+        text, tags, trip = (" ".join(str(v).split()) for v in (text, tags, trip))
         new = not path.exists()
         with path.open("a", encoding="utf-8") as f:
             if new:

@@ -49,6 +49,11 @@ def load_settings() -> Settings:
         raise SystemExit("KAI_DEVICE_TOKEN is the example value or too short; generate one with:\n"
                          "  python3 -c 'import secrets; print(secrets.token_urlsafe(18))'")
 
+    mcp_token = env.get("KAI_MCP_TOKEN") or None
+    if mcp_token and len(mcp_token) < 16:
+        raise SystemExit("KAI_MCP_TOKEN is too short; generate one with:\n"
+                         "  python3 -c 'import secrets; print(secrets.token_urlsafe(24))'")
+
     units = env.get("KAI_UNITS", "imperial").lower()
     if units not in ("imperial", "metric"):
         raise SystemExit("KAI_UNITS must be 'imperial' or 'metric'")
@@ -72,5 +77,5 @@ def load_settings() -> Settings:
         hermes_url=env.get("HERMES_URL") or None,
         hermes_api_key=env.get("HERMES_API_KEY") or None,
         mcp_port=int(env.get("KAI_MCP_PORT", "8766")),
-        mcp_token=env.get("KAI_MCP_TOKEN") or None,
+        mcp_token=mcp_token,
     )

@@ -10,6 +10,7 @@ Good to roughly +/-20% over windows of 20+ minutes in one steady state; useless 
 
 import argparse
 import csv
+import math
 import re
 import time
 from collections import defaultdict
@@ -51,13 +52,26 @@ class PowerLog:
             if header != FIELDS:
                 self.path.rename(self.path.with_name(f"power-{int(self.path.stat().st_mtime)}.csv"))
 
-    def write(self, device: str, kind: str, **values) -> None:
+    def write(self, device: str, kind: str, values: dict) -> dict:
+        """Append one row. Only known fields, as numbers (or a short word for `mode`), so a device can't
+        inject spreadsheet formulas or override the timestamp. Returns the cleaned values."""
+        clean = {}
+        for k, v in values.items():
+            if k not in FIELDS or k in ("ts", "device", "kind"):
+                continue
+            if isinstance(v, bool):
+                clean[k] = int(v)
+            elif isinstance(v, (int, float)) and math.isfinite(v):
+                clean[k] = v
+            elif k == "mode" and isinstance(v, str):
+                clean[k] = re.sub(r"[^A-Za-z]", "", v)[:16]
         new = not self.path.exists()
         with self.path.open("a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
             if new:
                 w.writeheader()
-            w.writerow({"ts": f"{time.time():.0f}", "device": device, "kind": kind, **values})
+            w.writerow({"ts": f"{time.time():.0f}", "device": device, "kind": kind, **clean})
+        return clean
 
 
 def sleep_estimate_ma(slept_s: float, mv_before: float, mv_after: float) -> float | None:

@@ -1,5 +1,8 @@
 import asyncio
+import re
 from datetime import datetime, timedelta
+
+import pytest
 
 from kai_relay import tools
 from kai_relay.agent import AgentHub, AgentStore
@@ -85,12 +88,16 @@ def test_watch_wakes_after_quiet_hours_and_stops_when_met(tmp_path):
                                     datetime.now() + timedelta(days=2))
         prompt = hermes.jobs["h1"]["prompt"]
         wake = sched.next_wake()
-        await sched.watch_fired(job["name"])
+        key = re.search(r'watch="([^"]+)"', prompt).group(1)
+        assert not await sched.watch_fired(job["name"])                # the name alone isn't enough
+        assert not await sched.watch_fired(job["name"] + ".guessed")
+        assert sched.active_jobs()
+        await sched.watch_fired(key)
         return job, prompt, wake
 
     job, prompt, wake = asyncio.run(go())
     assert job["name"] == "kai-watch-1"
-    assert f'watch="{job["name"]}"' in prompt and "[SILENT]" in prompt and "Stop watching after" in prompt
+    assert f'watch="{job["name"]}.' in prompt and "[SILENT]" in prompt and "Stop watching after" in prompt
     assert wake is not None and not in_quiet_hours(wake)  # a watch never wakes the Stick at night
     assert hermes.deleted == ["h1"] and hermes.jobs == {} and sched.active_jobs() == []
 
@@ -206,3 +213,80 @@ def test_action_confirmed_once():
 
     asyncio.run(run())
     assert len(audio) == 1  # only the first confirmation reached the Stick
+
+
+def test_schedule_limits(tmp_path):
+    from kai_relay.schedule import MAX_ACTIVE_JOBS, ScheduleLimit, check_frequency
+
+    for bad in ("every 1m", "every 5 minutes", "every minute", "*/5 * * * *", "every 30m", "every half hour"):
+        with pytest.raises(ScheduleLimit):
+            check_frequency(bad)
+    for ok in ("every 3h", "every 180m", "every 1h", "every saturday at 5:45am", "daily at 7am"):
+        check_frequency(ok)
+
+    hub, sched, hermes = make(tmp_path)
+
+    async def go():
+        with pytest.raises(ScheduleLimit):
+            await sched.add_reminder("too far", datetime.now() + timedelta(days=60))
+        w = await sched.add_watch("wind drops", "every 3h", datetime.now() + timedelta(days=365))
+        for i in range(MAX_ACTIVE_JOBS - 1):
+            await sched.add_briefing(f"brief {i}", "daily at 7am")
+        with pytest.raises(ScheduleLimit):
+            await sched.add_briefing("one too many", "daily at 7am")
+        return w
+
+    asyncio.run(go())
+    until = datetime.fromisoformat(sched.active_jobs()[0]["until"])
+    assert until <= datetime.now() + timedelta(days=15)  # watches last two weeks at most
+
+
+def test_parallel_jobs_get_distinct_names(tmp_path):
+    """One turn's tool calls run concurrently: two watches must not share a name (and orphan a job)."""
+    hub, sched, hermes = make(tmp_path)
+
+    async def go():
+        return await asyncio.gather(sched.add_watch("wind drops", "every 3h", None),
+                                    sched.add_watch("fog clears", "every 3h", None))
+
+    a, b = asyncio.run(go())
+    assert a["name"] != b["name"] and len(sched.active_jobs()) == 2 and len(hermes.jobs) == 2
+
+
+def test_no_tools_while_passing_on_an_update():
+    """An update is text from outside (Hermes read it on the web): if it tells Gemini to call a tool, the
+    relay refuses instead of running it."""
+    from types import SimpleNamespace as NS
+
+    from kai_relay import tools
+    from kai_relay.session import KaiSession
+
+    ran, responses = [], []
+    s = KaiSession.__new__(KaiSession)
+    s.device, s._delivering = "t", [7]
+
+    async def respond(function_responses):
+        responses.extend(function_responses)
+
+    async def call(name, args, ctx):
+        ran.append(name)
+
+    async def run():
+        orig, tools.call = tools.call, call
+        try:
+            msg = NS(go_away=None, server_content=None, tool_call=NS(function_calls=[
+                NS(id="1", name="cancel_scheduled", args={"what": "fishing"})]))
+            await s._on_live_message(NS(send_tool_response=respond), msg)
+        finally:
+            tools.call = orig
+
+    asyncio.run(run())
+    assert ran == [] and "error" in responses[0].response
+
+
+def test_device_names_are_sanitised():
+    from kai_relay.session import device_name
+
+    assert device_name("kai-45:14") == "kai-4514"
+    assert device_name("x\nFAKE LOG LINE") == "xFAKELOGLINE"
+    assert device_name(None) == "?" and len(device_name("a" * 500)) == 32

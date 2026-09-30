@@ -10,6 +10,8 @@
 
 import asyncio
 import logging
+import re
+import secrets
 from collections.abc import Awaitable, Callable
 from datetime import datetime, time, timedelta
 
@@ -21,6 +23,31 @@ log = logging.getLogger("kai.schedule")
 LOOP_S = 15
 JOB_GRACE = timedelta(minutes=6)  # a scheduled Hermes run needs a few minutes before there's anything to say
 QUIET_START, QUIET_END = time(22, 0), time(7, 0)
+# Limits: each Hermes job run is an agent run with web searches, so cost scales with them.
+MAX_ACTIVE_JOBS = 10
+MAX_PENDING_REMINDERS = 50
+MAX_REMINDER_AHEAD = timedelta(days=31)
+MAX_WATCH_DAYS = 14
+MIN_INTERVAL_MIN = 60
+
+
+class ScheduleLimit(ValueError):
+    """A request the scheduler refuses: too many, too far ahead or too often. The message is for the owner."""
+
+
+_UNIT_MIN = {"s": 1 / 60, "sec": 1 / 60, "secs": 1 / 60, "second": 1 / 60, "seconds": 1 / 60,
+             "m": 1, "min": 1, "mins": 1, "minute": 1, "minutes": 1,
+             "h": 60, "hr": 60, "hrs": 60, "hour": 60, "hours": 60}
+
+
+def check_frequency(schedule: str) -> None:
+    """Refuse schedules that run more often than hourly ("every 5m", "every minute", cron expressions)."""
+    s = schedule.lower()
+    if "*" in s or re.search(r"\b(minutely|every (other )?(second|minute)|half an? hour|every half)\b", s):
+        raise ScheduleLimit("I can check at most once an hour.")
+    for n, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]+)", s):
+        if unit in _UNIT_MIN and float(n) * _UNIT_MIN[unit] < MIN_INTERVAL_MIN:
+            raise ScheduleLimit("I can check at most once an hour.")
 
 BRIEFING_PROMPT = """Scheduled briefing {name} for Kai's owner (Kai is their pocket voice assistant).
 Task: {what}
@@ -34,7 +61,7 @@ Condition to watch for: {condition}
 {until}Check it now. For weather, wind, waves, tides, sunrise, sunset and light you must use Kai's tools
 (get_weather, get_tides, get_sun_times), not web search: they are exact for the place and day. Use web
 search only for anything else.
-- If the condition is met: call kai_notify with watch="{name}", a summary of one or two short spoken
+- If the condition is met: call kai_notify with watch="{watch_key}", a summary of one or two short spoken
   sentences saying what happened, a small card and details_md. Then reply "done".
 - If it is not met: reply exactly [SILENT]."""
 
@@ -80,6 +107,10 @@ class Scheduler:
             );
             """
         )
+        # A watch's secret: only its own job knows it, so no other Hermes run can stop it via kai_notify.
+        if "secret" not in {r["name"] for r in self.db.execute("PRAGMA table_info(kai_jobs)")}:
+            with self.db:
+                self.db.execute("ALTER TABLE kai_jobs ADD COLUMN secret TEXT")
         self._listeners: set[Listener] = set()
         self._jobs_cache: list[dict] = []
         self._jobs_fresh = False  # the cache reflects a successful listing from Hermes
@@ -107,6 +138,10 @@ class Scheduler:
     # ---- reminders ----
 
     async def add_reminder(self, text: str, due: datetime) -> int:
+        if due > datetime.now() + MAX_REMINDER_AHEAD:
+            raise ScheduleLimit("I can set reminders up to a month ahead.")
+        if len(self.pending_reminders()) >= MAX_PENDING_REMINDERS:
+            raise ScheduleLimit(f"You already have {MAX_PENDING_REMINDERS} reminders waiting.")
         with self.db:
             cur = self.db.execute("INSERT INTO reminders (created_at, due_at, text) VALUES (?, ?, ?)",
                                   (_iso(datetime.now()), _iso(due), text))
@@ -145,21 +180,39 @@ class Scheduler:
     async def _add_job(self, kind: str, description: str, schedule: str, until: datetime | None) -> dict:
         if not self.client:
             raise HermesError("the background brain isn't configured")
-        n = (self.db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM kai_jobs").fetchone()[0])
-        name = f"kai-{'brief' if kind == 'briefing' else 'watch'}-{n}"
+        check_frequency(schedule)
+        if len(self.active_jobs()) >= MAX_ACTIVE_JOBS:
+            raise ScheduleLimit(f"You already have {MAX_ACTIVE_JOBS} briefings and watches; cancel one first.")
+        if kind == "watch":
+            last = datetime.combine(datetime.now().date() + timedelta(days=MAX_WATCH_DAYS), time())
+            until = min(until, last) if until else last
+        # Reserve the row (and so the name) before the slow Hermes call: tool calls in one turn run in
+        # parallel, and two jobs must never share a name.
+        secret = secrets.token_urlsafe(9)
+        with self.db:
+            cur = self.db.execute(
+                "INSERT INTO kai_jobs (created_at, kind, name, hermes_id, description, schedule, until, active, secret) "
+                "VALUES (?, ?, ?, '', ?, ?, ?, 0, ?)",
+                (_iso(datetime.now()), kind, f"pending-{secret}", description, schedule,
+                 _iso(until) if until else None, secret),
+            )
+        row_id = cur.lastrowid
+        name = f"kai-{'brief' if kind == 'briefing' else 'watch'}-{row_id}"
         if kind == "briefing":
             prompt = BRIEFING_PROMPT.format(name=name, what=description)
         else:
             until_line = f"Stop watching after {until:%A %B %-d}.\n" if until else ""
-            prompt = WATCH_PROMPT.format(name=name, condition=description, until=until_line)
-        job = await self.client.create_job(name, prompt, schedule)
+            prompt = WATCH_PROMPT.format(name=name, condition=description, until=until_line,
+                                         watch_key=f"{name}.{secret}")
+        try:
+            job = await self.client.create_job(name, prompt, schedule)
+        except Exception:
+            with self.db:
+                self.db.execute("DELETE FROM kai_jobs WHERE id = ?", (row_id,))
+            raise
         with self.db:
-            self.db.execute(
-                "INSERT INTO kai_jobs (created_at, kind, name, hermes_id, description, schedule, until) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (_iso(datetime.now()), kind, name, job["id"], description, job.get("schedule_display") or schedule,
-                 _iso(until) if until else None),
-            )
+            self.db.execute("UPDATE kai_jobs SET name = ?, hermes_id = ?, schedule = ?, active = 1 WHERE id = ?",
+                            (name, str(job["id"]), job.get("schedule_display") or schedule, row_id))
         log.info("%s %s (Hermes job %s, %s): %s", kind, name, job["id"], job.get("schedule_display"), description)
         await self.refresh_jobs()
         return {"name": name, "schedule": job.get("schedule_display") or schedule,
@@ -179,11 +232,17 @@ class Scheduler:
         log.info("%s %s stopped (%s)", job["kind"], job["name"], why)
         await self.refresh_jobs()
 
-    async def watch_fired(self, name: str) -> None:
-        """kai_notify said this watch's condition was met: stop it."""
+    async def watch_fired(self, watch_key: str) -> bool:
+        """kai_notify said this watch's condition was met: stop it. The key ("kai-watch-N.<secret>") is in
+        that watch's own prompt only, so no other Hermes run can stop someone else's watch."""
+        name, _, secret = watch_key.strip().rpartition(".")
         for job in self.active_jobs():
-            if job["name"] == name and job["kind"] == "watch":
+            if (job["name"] == name and job["kind"] == "watch" and job["secret"]
+                    and secrets.compare_digest(job["secret"], secret)):
                 await self._deactivate(job, "condition met")
+                return True
+        log.warning("kai_notify named an unknown watch or a wrong key: %s", name or watch_key[:40])
+        return False
 
     async def prune(self) -> None:
         """Stop watches past their last day, and forget jobs Hermes no longer has (one-shot, finished)."""
@@ -277,8 +336,6 @@ KIND_WORDS = {"reminder", "reminders", "briefing", "briefings", "brief", "watch"
 
 
 def _words(text: str) -> set[str]:
-    import re
-
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP_WORDS}
 
 
@@ -290,7 +347,10 @@ def _local(iso: str | None) -> datetime | None:
     """Hermes returns offset-aware ISO times; the relay works in naive local time (TZ of the service)."""
     if not iso:
         return None
-    t = datetime.fromisoformat(iso)
+    try:
+        t = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return None  # Hermes's value, not ours: ignore what we can't read
     return t.astimezone().replace(tzinfo=None) if t.tzinfo else t
 
 

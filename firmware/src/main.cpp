@@ -24,7 +24,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.11.0";
+static constexpr const char* FW_VERSION = "0.11.1";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -42,6 +42,14 @@ static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 45000;      // on battery
 static constexpr uint32_t TIMER_WAKE_IDLE_MS = 10000;
 static constexpr uint32_t TIMER_WAKE_CONNECT_MS = 25000;   // give Wi-Fi and the relay this long first
 static constexpr uint32_t MAX_WAKE_IN_S = 7 * 24 * 3600;
+static constexpr uint32_t MIN_TIMER_WAKE_MS = 30000;
+// After this many timer wakes in a row with no button press, only a button wakes it: a misbehaving (or
+// impersonated) relay can't keep waking it to drain the battery.
+static constexpr uint8_t MAX_UNTOUCHED_TIMER_WAKES = 12;
+// Nothing Kai says runs this long. A reply that does, with no button press, is dropped and the relay is
+// ignored for a minute, so a stream of captions can't keep the Stick awake.
+static constexpr uint32_t MAX_REPLY_MS = 3 * 60 * 1000;
+static constexpr uint32_t REPLY_COOLDOWN_MS = 60000;
 static constexpr uint32_t CPU_MHZ_BUSY = 240;               // listening, thinking, speaking
 static constexpr uint32_t CPU_MHZ_IDLE = 80;                // lowest speed Wi-Fi allows
 // M5PM1 (I2C 0x6E): GPIO2 switches the L3B rail (LCD, backlight, mic, codec, amp).
@@ -67,6 +75,7 @@ static constexpr size_t EARLY_TALK_BYTES = audio::MIC_RATE * 2 * EARLY_TALK_MAX_
 RTC_DATA_ATTR static uint8_t cachedBssid[6];
 RTC_DATA_ATTR static int32_t cachedChannel = 0;
 RTC_DATA_ATTR static uint32_t cachedRelayIp = 0;
+RTC_DATA_ATTR static uint8_t untouchedTimerWakes = 0;  // timer wakes in a row with no button press
 #ifdef KAI_TELEMETRY
 RTC_DATA_ATTR static int64_t sleptAtUs = 0;  // RTC wall clock keeps running through deep sleep
 RTC_DATA_ATTR static int16_t sleptMv = 0;
@@ -159,7 +168,13 @@ static int64_t rtcNowUs() {
 }
 #endif
 
+static uint32_t lastPressAt = 0;  // a real button press (lastInteraction also moves on mode changes)
+static uint32_t replyStartedAt = 0;
+static uint32_t replyCooldownUntil = 0;
+
 static void wake() {
+  untouchedTimerWakes = 0;
+  lastPressAt = millis();
   lastInteraction = millis();
   touched = true;
   if (screenOff) {
@@ -205,9 +220,9 @@ static void wake() {
     rtc_gpio_pulldown_dis(pin);
   }
   // Something is due later (a reminder, a briefing, a watch check): wake on the RTC timer for it too.
-  if (wakeTimerSet) {
+  if (wakeTimerSet && untouchedTimerWakes < MAX_UNTOUCHED_TIMER_WAKES) {
     int32_t remainMs = int32_t(wakeTimerAtMs - millis());
-    if (remainMs < 5000) remainMs = 5000;
+    if (remainMs < int32_t(MIN_TIMER_WAKE_MS)) remainMs = MIN_TIMER_WAKE_MS;
     esp_sleep_enable_timer_wakeup(uint64_t(remainMs) * 1000ULL);
     log_i("timer wake in %d s", remainMs / 1000);
   }
@@ -317,8 +332,13 @@ static void sendPowerReport(uint32_t now) {
 
 // Anything Kai sends back (speech, words, a card) lands on the reply screen, whatever we were showing.
 static void replyActivity() {
-  lastReplyActivity = millis();
-  if (mode != Mode::Reply) setMode(Mode::Reply);
+  const uint32_t now = millis();
+  if (int32_t(now - replyCooldownUntil) < 0) return;  // a runaway reply was just cut off
+  lastReplyActivity = now;
+  if (mode != Mode::Reply) {
+    replyStartedAt = now;
+    setMode(Mode::Reply);
+  }
 }
 
 static void showCard(const Card& c) {
@@ -408,7 +428,7 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     wakeTimerSet = s > 0;
     wakeTimerAtMs = millis() + s * 1000UL;
   } else if (!strcmp(type, "nudge")) {
-    audio::chime();  // Kai is about to say something it wasn't asked for
+    if (!hushed && mode != Mode::Listening) audio::chime();  // Kai is about to say something unasked
   } else if (!strcmp(type, "inbox")) {
     face::setInbox(doc["count"] | 0);
   } else if (!strcmp(type, "interrupted")) {
@@ -429,6 +449,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
       wsConnected = true;
+      const bool firstConnect = !everConnected;  // the wake reason belongs to this boot's first hello
       everConnected = true;
       connectedSinceBegin = true;
       JsonDocument hello;
@@ -436,10 +457,10 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
-      if (!everConnected) hello["wake"] = wokeByTimer ? "timer" : (wokeFromSleep ? "button" : "boot");
+      if (firstConnect) hello["wake"] = wokeByTimer ? "timer" : (wokeFromSleep ? "button" : "boot");
       hello["codecs"].to<JsonArray>().add("opus");  // needs relay 0.9+
 #ifdef KAI_TELEMETRY
-      if (wokeFromSleep && sleptAtUs && !everConnected) {  // one deep-sleep measurement per wake
+      if (wokeFromSleep && sleptAtUs && firstConnect) {  // one deep-sleep measurement per wake
         JsonObject sleep = hello["sleep"].to<JsonObject>();
         sleep["slept_s"] = (rtcNowUs() - sleptAtUs) / 1000000;
         sleep["mv_before"] = sleptMv;
@@ -647,8 +668,10 @@ void setup() {
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
     wokeFromSleep = true;
     wokeToTalk = esp_sleep_get_ext1_wakeup_status() & (1ULL << PIN_BTN_A);
+    untouchedTimerWakes = 0;
   } else if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
     wokeFromSleep = wokeByTimer = true;
+    if (untouchedTimerWakes < 255) untouchedTimerWakes++;
   }
 
   startWifi();
@@ -713,7 +736,15 @@ void loop() {
         audio::powerDown();     // amp and codec off until the next answer
         setBusy(false);
       }
-      if (!speaking && now - lastReplyActivity > REPLY_TIMEOUT_MS) setMode(Mode::Idle);
+      if (!speaking && now - lastReplyActivity > REPLY_TIMEOUT_MS) {
+        setMode(Mode::Idle);
+      } else if (now - replyStartedAt > MAX_REPLY_MS && int32_t(lastPressAt - replyStartedAt) < 0) {
+        log_w("reply ran %u s with no button press: dropping it", MAX_REPLY_MS / 1000);
+        audio::clearPlayback();
+        voice::dropQueued();
+        replyCooldownUntil = now + REPLY_COOLDOWN_MS;
+        setMode(Mode::Idle);
+      }
       break;
     }
 

@@ -32,10 +32,13 @@ def bundle(packets: list[bytes]) -> list[bytes]:
     return messages
 
 
+MAX_BUNDLE_PACKETS = 128  # the Stick sends at most ~65 per 4 KB message
+
+
 def unbundle(message: bytes) -> list[bytes]:
     """Packets in one Opus bundle message (header byte already checked by the caller)."""
     packets, i = [], 1
-    while i + 2 <= len(message):
+    while i + 2 <= len(message) and len(packets) < MAX_BUNDLE_PACKETS:
         (n,) = struct.unpack_from("<H", message, i)
         i += 2
         if n == 0 or i + n > len(message):
