@@ -1,13 +1,20 @@
 # Kai
 
+**A pocket voice pal for your self-hosted AI agent.** Kai gives a [Hermes Agent](https://github.com/nousresearch/hermes-agent)
+a body you can clip to your bag: push-to-talk voice, a pixel face, a badge and a chime, on a 20 g ESP32 stick.
+
 <p align="center">
   <img src="docs/images/kai-on-stick.jpg" width="440" alt="Kai's pixel face on the M5StickS3's screen: a small grey stick with a blue front button and a lanyard">
   <br><sub>Kai on a real M5StickS3 (48 × 24 × 15 mm, 20 g), clipped to a lanyard.</sub>
 </p>
 
-A pocket AI pal on an **M5StickS3**. Hold the button and ask; Kai answers out loud, with a pixel face
-and a small info card. Quick questions get an answer in about two seconds. Bigger jobs ("research…",
-"plan…", "tell me later") go to a background agent, and Kai tells you when they're done.
+Hold the button on the **M5StickS3** and ask. Kai answers out loud, with a pixel face and a small info
+card:
+- **Quick questions** get an answer in about two seconds, from Gemini Live.
+- **Bigger jobs** ("research…", "plan…", "tell me later") go to your agent, and Kai tells you when they're
+  done.
+- **Your agent** remembers you across conversations, and can wake the Stick for reminders, briefings and
+  watches.
 
 ## How it works: a fast path and a slow path
 
@@ -41,6 +48,28 @@ M5StickS3 ──TLS────▶ kai-relay ──▶ Gemini Live .............
   memory of you and sends Kai a short brief, so Kai starts every conversation already knowing you.
   It reaches back into Kai through a small MCP server on localhost (`kai_notify` and Kai's data tools).
   Anything it brings back from the web is treated as data, never as instructions.
+
+## For Hermes Agent and OpenClaw users
+
+Your agent already researches, remembers and runs on a schedule. Kai is the device that lets you talk to
+it, and hear back from it, away from a keyboard.
+- **Hermes Agent works today:** a pinned, locked-down Docker setup in
+  [relay/deploy/hermes/](relay/deploy/hermes/README.md), applied by one `configure.sh`. There's no shell,
+  file or browser access, nothing acts unattended, and anything it brings back from the web is treated
+  as data, never as instructions.
+- **The contract is small,** so other agents can plug in. The relay asks the agent; the agent answers
+  through Kai's MCP server:
+
+  | Direction | What | Hermes today |
+  |---|---|---|
+  | relay → agent | start a background run with a task; poll for `{speak, card, details_md}` | `POST /v1/runs` (`relay/kai_relay/hermes.py`, ~100 lines) |
+  | agent → Kai | `kai_notify`: a spoken update now, or a badge if the Stick is asleep | MCP client, bearer token, localhost |
+  | agent → Kai | `kai_profile_brief`: the short memory brief Kai's voice starts with | MCP, with a one-time key per memory run |
+  | agent → Kai | read-only data tools: tides, weather, sun and light | MCP |
+  | agent schedule | briefings and watches report through `kai_notify`; the relay wakes the Stick for them | Hermes cron jobs |
+
+- **OpenClaw** has the same pieces (background work, cron, a heartbeat), but there's no adapter yet:
+  one would replace `hermes.py` and call Kai's MCP tools. Contributions are welcome.
 
 ## Screens
 
