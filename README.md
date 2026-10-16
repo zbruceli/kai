@@ -62,7 +62,7 @@ it, and hear back from it, away from a keyboard.
 
   | Direction | What | Hermes today |
   |---|---|---|
-  | relay → agent | start a background run with a task; poll for `{speak, card, details_md}` | `POST /v1/runs` (`relay/kai_relay/hermes.py`, ~100 lines) |
+  | relay → agent | start a background run with a task; poll for `{speak, card, details_md}` | `POST /v1/runs` (`relay/kai_relay/hermes.py`, under 100 lines) |
   | agent → Kai | `kai_notify`: a spoken update now, or a badge if the Stick is asleep | MCP client, bearer token, localhost |
   | agent → Kai | `kai_profile_brief`: the short memory brief Kai's voice starts with | MCP, with a one-time key per memory run |
   | agent → Kai | read-only data tools: tides, weather, sun and light | MCP |
