@@ -468,7 +468,13 @@ class KaiSession:
 
     async def _deliver_next(self) -> None:
         """Speak one waiting result, but never over the owner or over Kai's own answer."""
-        if not self._to_deliver or self._ptt or self._model_busy or self._delivering:
+        if self._ptt or self._model_busy or self._delivering:
+            return
+        # Check each one is still wanted right before saying it: a reminder cancelled after it was queued
+        # (say, from another Stick) is withdrawn from the inbox, and must not be spoken.
+        while self._to_deliver and not self.hub.is_pending(self._to_deliver[0].id):
+            log.info("[%s] skipping update %s: no longer pending", self.device, self._to_deliver.pop(0).id)
+        if not self._to_deliver:
             return
         item = self._to_deliver.pop(0)
         self._delivering = [item.id]

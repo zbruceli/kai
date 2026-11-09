@@ -153,6 +153,13 @@ class Scheduler:
         rows = self.db.execute("SELECT * FROM reminders WHERE fired_at IS NULL AND cancelled = 0 ORDER BY due_at")
         return [dict(r) for r in rows]
 
+    def unspoken_reminders(self) -> list[dict]:
+        """Reminders that have fired but whose update hasn't been spoken yet (e.g. the Stick was asleep)."""
+        rows = self.db.execute(
+            "SELECT r.* FROM reminders r JOIN inbox i ON i.ref = 'reminder:' || r.id "
+            "WHERE r.fired_at IS NOT NULL AND r.cancelled = 0 AND i.delivered_at IS NULL ORDER BY r.due_at")
+        return [dict(r) for r in rows]
+
     async def fire_due(self, within_s: float = 0) -> int:
         """Turn reminders that are due (or due within `within_s`) into inbox updates."""
         limit = datetime.now() + timedelta(seconds=within_s)
@@ -163,7 +170,7 @@ class Scheduler:
             with self.db:
                 self.db.execute("UPDATE reminders SET fired_at = ? WHERE id = ?", (_iso(datetime.now()), r["id"]))
             await self.hub.notify(f"Reminder: {r['text']}", {"title": "Reminder", "lines": _wrap(r["text"])},
-                                  r["text"], source="reminder")
+                                  r["text"], source="reminder", ref=_ref(r["id"]))
             fired += 1
         if fired:
             await self._changed()
@@ -288,10 +295,13 @@ class Scheduler:
         words -= KIND_WORDS
         gone = []
         if not kinds or "reminder" in kinds:
-            for r in self.pending_reminders():
+            # Also ones that fired while the Stick slept but haven't been said yet: cancelling must stop them.
+            for r in self.pending_reminders() + self.unspoken_reminders():
                 if words and words <= _words(r["text"]) or what.strip() == str(r["id"]):
                     with self.db:
                         self.db.execute("UPDATE reminders SET cancelled = 1 WHERE id = ?", (r["id"],))
+                    if r["fired_at"]:
+                        await self.hub.withdraw(_ref(r["id"]))
                     gone.append(f"reminder: {r['text']}")
         for job in self.active_jobs():
             if kinds and job["kind"] not in kinds:
@@ -337,6 +347,10 @@ KIND_WORDS = {"reminder", "reminders", "briefing", "briefings", "brief", "watch"
 
 def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP_WORDS}
+
+
+def _ref(reminder_id: int) -> str:
+    return f"reminder:{reminder_id}"
 
 
 def _iso(t: datetime) -> str:

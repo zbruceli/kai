@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+**Timer wakes reconcile with the relay** (from a design review of the reminder flow):
+- **A reminder cancelled after it fired but before it was spoken is no longer announced.** It used to
+  wait in the inbox regardless. Each update now records which reminder it came from: cancelling withdraws
+  the unspoken copy, and every update is re-checked right before Kai says it.
+- **The Stick keeps its wake alarm when a wake can't reach the relay.** It lived in ordinary memory and
+  was lost on such a wake, so the reminder waited for a button press. It's now an absolute time in RTC
+  memory, retried every 5 minutes within the existing 12-wake limit.
+- **Tests:**
+  - relay: the real `hello` handler for a timer wake, with a reminder cancelled, moved, or fired then
+    cancelled while the Stick slept (nothing spoken, next valid wake sent), and a withdrawn update skipped
+    after it was queued;
+  - firmware: host-side unit tests of the alarm logic (`pio test -e native`), including the offline wake.
+
 ## v0.12.0: encrypted link, security hardening, smarter routing
 
 The Stick now talks to the relay over an encrypted, mutually authenticated link. A full security audit

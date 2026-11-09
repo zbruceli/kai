@@ -146,6 +146,14 @@ Stick ─wss─▶ relay ──▶ Gemini Live          (fast path)
   - On a timer wake, `hello` carries `"wake": "timer"`. The relay fires reminders due within 60 s, then
     speaks every waiting update, each preceded by `{"type": "nudge"}` (the chime). With nothing due, the
     Stick sleeps again after 10 s.
+  - **A timer wake is only a reason to reconnect, never a reason to speak.** The Stick knows a time, not
+    which reminder it's for; the relay checks its own state on every wake. A reminder cancelled or moved
+    while the Stick slept is never announced: no `nudge`, and a fresh `schedule` (the next valid time, or
+    0) replaces the old alarm.
+    - A reminder that fired while the Stick slept waits in the inbox, linked to it (`ref`). Cancelling it
+      withdraws that copy, and each update is re-checked right before it's spoken.
+    - The alarm is an absolute RTC time kept in RTC memory (`firmware/src/wake_alarm.h`). A wake that
+      can't reach the relay keeps it and retries 5 minutes later, within the 12-wake limit.
 - **Hermes's lock-down** (`relay/deploy/hermes/`):
   - pinned image (tag and digest), with only its data folder mounted;
   - no terminal, file, code, browser or computer-use tools;

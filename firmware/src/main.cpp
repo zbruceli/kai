@@ -11,20 +11,19 @@
 #include <driver/rtc_io.h>
 #include <esp_heap_caps.h>
 #include <esp_sleep.h>
-#ifdef KAI_TELEMETRY
 #include <sys/time.h>
-#endif
 
 #include "audio.h"
 #include "face.h"
 #include "secrets.h"
 #include "voice_codec.h"
+#include "wake_alarm.h"
 
 // libopus (fixed point) keeps sizeable frames on the stack; Arduino's default 8 KB loop stack is too tight.
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.12.0";
+static constexpr const char* FW_VERSION = "0.12.1";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -41,8 +40,6 @@ static constexpr uint32_t DEEP_SLEEP_AFTER_MS = 45000;      // on battery
 // Woken by its own timer (a reminder or briefing is due) and nobody touched it: sleep again soon.
 static constexpr uint32_t TIMER_WAKE_IDLE_MS = 10000;
 static constexpr uint32_t TIMER_WAKE_CONNECT_MS = 25000;   // give Wi-Fi and the relay this long first
-static constexpr uint32_t MAX_WAKE_IN_S = 7 * 24 * 3600;
-static constexpr uint32_t MIN_TIMER_WAKE_MS = 30000;
 // After this many timer wakes in a row with no button press, only a button wakes it: a misbehaving (or
 // impersonated) relay can't keep waking it to drain the battery.
 static constexpr uint8_t MAX_UNTOUCHED_TIMER_WAKES = 12;
@@ -76,6 +73,9 @@ RTC_DATA_ATTR static uint8_t cachedBssid[6];
 RTC_DATA_ATTR static int32_t cachedChannel = 0;
 RTC_DATA_ATTR static uint32_t cachedRelayIp = 0;
 RTC_DATA_ATTR static uint8_t untouchedTimerWakes = 0;  // timer wakes in a row with no button press
+// When to wake on our own (RTC clock, us; 0 = none). Kept across deep sleep: if a wake can't reach the
+// relay, the alarm survives and is retried, instead of waiting for a button press (see wake_alarm.h).
+RTC_DATA_ATTR static int64_t alarmAtUs = 0;
 #ifdef KAI_TELEMETRY
 RTC_DATA_ATTR static int64_t sleptAtUs = 0;  // RTC wall clock keeps running through deep sleep
 RTC_DATA_ATTR static int16_t sleptMv = 0;
@@ -91,8 +91,6 @@ static bool everConnected = false;
 static bool wokeFromSleep = false;
 static bool wokeByTimer = false;   // this boot came from the RTC timer, not a button
 static bool touched = false;       // a button was pressed since boot
-static bool wakeTimerSet = false;  // the relay asked to be woken for something due
-static uint32_t wakeTimerAtMs = 0;
 static uint32_t wsBeganAt = 0;
 static bool usedRelayCache = false;
 static bool connectedSinceBegin = false;
@@ -162,13 +160,12 @@ static void backlight(uint8_t level) {
   M5.Display.setBrightness(level);
 }
 
-#ifdef KAI_TELEMETRY
+// The RTC clock: keeps counting through deep sleep (nothing sets it from the network, so it never jumps).
 static int64_t rtcNowUs() {
   timeval tv;
   gettimeofday(&tv, nullptr);
   return int64_t(tv.tv_sec) * 1000000 + tv.tv_usec;
 }
-#endif
 
 static uint32_t lastPressAt = 0;  // a real button press (lastInteraction also moves on mode changes)
 static uint32_t replyStartedAt = 0;
@@ -222,11 +219,11 @@ static void wake() {
     rtc_gpio_pulldown_dis(pin);
   }
   // Something is due later (a reminder, a briefing, a watch check): wake on the RTC timer for it too.
-  if (wakeTimerSet && untouchedTimerWakes < MAX_UNTOUCHED_TIMER_WAKES) {
-    int32_t remainMs = int32_t(wakeTimerAtMs - millis());
-    if (remainMs < int32_t(MIN_TIMER_WAKE_MS)) remainMs = MIN_TIMER_WAKE_MS;
-    esp_sleep_enable_timer_wakeup(uint64_t(remainMs) * 1000ULL);
-    log_i("timer wake in %d s", remainMs / 1000);
+  // The wake only means "reconnect and ask": the relay decides what, if anything, is still due.
+  const int64_t sleepUs = wakealarm::sleepUs(alarmAtUs, rtcNowUs());
+  if (sleepUs > 0 && untouchedTimerWakes < MAX_UNTOUCHED_TIMER_WAKES) {
+    esp_sleep_enable_timer_wakeup(uint64_t(sleepUs));
+    log_i("timer wake in %lld s", sleepUs / wakealarm::SECOND_US);
   }
   esp_deep_sleep_start();
 }
@@ -426,9 +423,7 @@ static void onRelayText(const uint8_t* payload, size_t length) {
     face::appendReplyText(doc["delta"] | "");
     replyActivity();
   } else if (!strcmp(type, "schedule")) {
-    const uint32_t s = min<uint32_t>(doc["wake_in_s"] | 0, MAX_WAKE_IN_S);
-    wakeTimerSet = s > 0;
-    wakeTimerAtMs = millis() + s * 1000UL;
+    alarmAtUs = wakealarm::alarmFromSchedule(doc["wake_in_s"] | 0, rtcNowUs());  // the relay's current truth
   } else if (!strcmp(type, "nudge")) {
     if (!hushed && mode != Mode::Listening) audio::chime();  // Kai is about to say something unasked
   } else if (!strcmp(type, "inbox")) {

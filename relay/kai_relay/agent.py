@@ -130,6 +130,14 @@ class AgentStore:
         if "kind" not in {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}:
             with self.db:
                 self.db.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'")
+        # ref: what an update came from ("reminder:12"), so cancelling that can withdraw an unspoken copy.
+        # withdrawn: cancelled before it was spoken (delivered_at is set too, so it leaves the queue).
+        inbox_cols = {r["name"] for r in self.db.execute("PRAGMA table_info(inbox)")}
+        with self.db:
+            if "ref" not in inbox_cols:
+                self.db.execute("ALTER TABLE inbox ADD COLUMN ref TEXT")
+            if "withdrawn" not in inbox_cols:
+                self.db.execute("ALTER TABLE inbox ADD COLUMN withdrawn INTEGER NOT NULL DEFAULT 0")
 
     def add_task(self, task: str, kind: str = "task") -> int:
         with self.db:
@@ -157,12 +165,13 @@ class AgentStore:
         return list(self.db.execute("SELECT * FROM tasks WHERE status = 'running' AND run_id IS NOT NULL"))
 
     def add_item(self, source: str, speak: str, card: dict | None, details_md: str,
-                 task_id: int | None = None) -> InboxItem:
+                 task_id: int | None = None, ref: str | None = None) -> InboxItem:
         created = _now()
         with self.db:
             cur = self.db.execute(
-                "INSERT INTO inbox (created_at, source, task_id, speak, card, details_md) VALUES (?, ?, ?, ?, ?, ?)",
-                (created, source, task_id, speak, json.dumps(card) if card else None, details_md),
+                "INSERT INTO inbox (created_at, source, task_id, speak, card, details_md, ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (created, source, task_id, speak, json.dumps(card) if card else None, details_md, ref),
             )
         return InboxItem(cur.lastrowid, created, source, speak, card, details_md)
 
@@ -188,6 +197,17 @@ class AgentStore:
             with self.db:
                 self.db.executemany("UPDATE inbox SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL",
                                     [(_now(), i) for i in ids])
+
+    def is_pending(self, item_id: int) -> bool:
+        row = self.db.execute("SELECT delivered_at FROM inbox WHERE id = ?", (item_id,)).fetchone()
+        return row is not None and row["delivered_at"] is None
+
+    def withdraw(self, ref: str) -> int:
+        """Take back updates from `ref` that haven't been spoken yet. Returns how many."""
+        with self.db:
+            cur = self.db.execute("UPDATE inbox SET delivered_at = ?, withdrawn = 1 "
+                                  "WHERE ref = ? AND delivered_at IS NULL", (_now(), ref))
+        return cur.rowcount
 
 
 def clean_card(card) -> dict | None:
@@ -358,9 +378,9 @@ class AgentHub:
         return self.store.items_since(("hermes", "watch"), datetime.now() - timedelta(hours=1)) < NOTIFY_PER_HOUR
 
     async def notify(self, speak: str, card: dict | None = None, details_md: str = "", source: str = "hermes",
-                     task_id: int | None = None) -> InboxItem:
+                     task_id: int | None = None, ref: str | None = None) -> InboxItem:
         speak, details_md = speak.strip()[:SPEAK_MAX_CHARS], details_md[:DETAILS_MAX_CHARS]
-        item = self.store.add_item(source, speak, clean_card(card), details_md, task_id)
+        item = self.store.add_item(source, speak, clean_card(card), details_md, task_id, ref)
         log.info("inbox +1 (%s): %s", source, speak[:120])
         await self._count_changed()  # every connected Stick updates its badge
         if self._listeners:  # but only the most recently used one speaks it
@@ -381,6 +401,17 @@ class AgentHub:
         """Read out, spoken, or otherwise seen: no longer counts toward the badge."""
         self.store.mark_delivered(ids)
         await self._count_changed()
+
+    def is_pending(self, item_id: int) -> bool:
+        return self.store.is_pending(item_id)
+
+    async def withdraw(self, ref: str) -> int:
+        """Whatever `ref` produced was cancelled before it was spoken: don't speak it."""
+        n = self.store.withdraw(ref)
+        if n:
+            log.info("inbox -%d (%s withdrawn)", n, ref)
+            await self._count_changed()
+        return n
 
     def _watch(self, task_id: int, run_id: str) -> None:
         t = asyncio.create_task(self._follow(task_id, run_id))

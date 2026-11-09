@@ -290,3 +290,126 @@ def test_device_names_are_sanitised():
     assert device_name("kai-45:14") == "kai-4514"
     assert device_name("x\nFAKE LOG LINE") == "xFAKELOGLINE"
     assert device_name(None) == "?" and len(device_name("a" * 500)) == 32
+
+
+# ---- a timer wake reconciles with the relay; it never replays what the Stick was set for ----------------
+
+def timer_wake(ctx):  # noqa: F811
+    """Run the relay's real hello handler for a Stick waking on its own timer. Returns (messages sent to the
+    Stick, what was injected into Gemini to be spoken)."""
+    from types import SimpleNamespace as NS
+
+    from kai_relay.session import KaiSession
+
+    s = KaiSession(None, None, ctx, ctx.settings)
+    sent, spoken = [], []
+
+    async def send(obj):
+        sent.append(obj)
+
+    async def no_gemini():
+        pass
+
+    async def say(turns, turn_complete):
+        spoken.append(turns.parts[0].text)
+
+    s._send, s._ensure_live, s._live = send, no_gemini, NS(send_client_content=say)
+    # A unique name: the relay keeps one connection per device and would close the previous test's one.
+    asyncio.run(s._on_control({"type": "hello", "device": f"kai-test-{id(s)}", "wake": "timer"}))
+    return sent, spoken
+
+
+def wake_in(sent):
+    return [m["wake_in_s"] for m in sent if m["type"] == "schedule"][-1]
+
+
+def test_timer_wake_speaks_what_is_due(ctx, tmp_path):  # noqa: F811
+    """Control: the alarm went off for a reminder that's still wanted, so it's chimed and spoken."""
+    hub, sched, _ = make(tmp_path, ctx)
+    asyncio.run(sched.add_reminder("check the coffee", datetime.now() + timedelta(seconds=30)))
+    sent, spoken = timer_wake(ctx)
+    assert {"type": "nudge"} in sent and len(spoken) == 1 and "check the coffee" in spoken[0]
+    assert wake_in(sent) == 0  # nothing else to wake for
+
+
+def test_timer_wake_after_cancel_is_silent(ctx, tmp_path):  # noqa: F811
+    """Cancelled while the Stick slept: the old alarm still wakes it, but it only learns the new schedule."""
+    hub, sched, _ = make(tmp_path, ctx)
+
+    async def go():
+        await sched.add_reminder("check the coffee", datetime.now() + timedelta(seconds=30))
+        await sched.add_reminder("golden hour at Pigeon Point", datetime.now() + timedelta(hours=2))
+        return await sched.cancel("coffee")
+
+    assert asyncio.run(go()) == ["reminder: check the coffee"]
+    sent, spoken = timer_wake(ctx)
+    assert {"type": "nudge"} not in sent and spoken == []
+    assert 7190 <= wake_in(sent) <= 7200  # next valid wake: the remaining reminder
+
+
+def test_timer_wake_after_move_is_silent(ctx, tmp_path):  # noqa: F811
+    """Moved later while the Stick slept (cancel + new): waking at the old time says nothing, and the Stick
+    is given the new time."""
+    hub, sched, _ = make(tmp_path, ctx)
+
+    async def go():
+        await sched.add_reminder("check the coffee", datetime.now() + timedelta(seconds=30))
+        await sched.cancel("coffee")
+        await sched.add_reminder("check the coffee", datetime.now() + timedelta(minutes=10))
+
+    asyncio.run(go())
+    sent, spoken = timer_wake(ctx)
+    assert {"type": "nudge"} not in sent and spoken == []
+    assert 590 <= wake_in(sent) <= 600
+
+
+def test_fired_then_cancelled_is_never_spoken(ctx, tmp_path):  # noqa: F811
+    """It came due while the Stick slept (so it's waiting in the inbox), then was cancelled: withdrawn,
+    not announced on the next wake."""
+    hub, sched, _ = make(tmp_path, ctx)
+
+    async def go():
+        await sched.add_reminder("check the coffee", datetime.now() - timedelta(seconds=1))
+        await sched.fire_due()  # the scheduler's own loop, with no Stick connected
+        waiting = hub.count()
+        return waiting, await sched.cancel("coffee")
+
+    waiting, cancelled = asyncio.run(go())
+    assert waiting == 1 and cancelled == ["reminder: check the coffee"] and hub.count() == 0
+    sent, spoken = timer_wake(ctx)
+    assert {"type": "nudge"} not in sent and spoken == []
+    assert wake_in(sent) == 0
+
+
+def test_update_withdrawn_after_queueing_is_skipped(ctx, tmp_path):  # noqa: F811
+    """Queued to be spoken, then cancelled (e.g. from another Stick) before its turn: the delivery check
+    right before speaking skips it, and the next one is spoken instead."""
+    from types import SimpleNamespace as NS
+
+    from kai_relay.session import KaiSession
+
+    hub, sched, _ = make(tmp_path, ctx)
+
+    async def go():
+        await sched.add_reminder("check the coffee", datetime.now() - timedelta(seconds=2))
+        await sched.add_reminder("move the car", datetime.now() - timedelta(seconds=1))
+        await sched.fire_due()
+
+    asyncio.run(go())
+    s = KaiSession(None, None, ctx, ctx.settings)
+    sent, spoken = [], []
+
+    async def send(obj):
+        sent.append(obj)
+
+    async def no_gemini():
+        pass
+
+    async def say(turns, turn_complete):
+        spoken.append(turns.parts[0].text)
+
+    s._send, s._ensure_live, s._live = send, no_gemini, NS(send_client_content=say)
+    s._queue_pending()                                   # both queued for speaking
+    asyncio.run(sched.cancel("coffee"))                  # ...then one is cancelled elsewhere
+    asyncio.run(s._deliver_next())
+    assert len(spoken) == 1 and "move the car" in spoken[0]
