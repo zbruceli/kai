@@ -96,6 +96,8 @@
         <span slot="not-allowed" class="warn">Flashing only works over HTTPS. Open this page from its https:// address.</span>
       </esp-web-install-button>
     </div>
+    <p id="no-firmware" class="warn" hidden>No firmware found next to this page. Open the published page,
+      <a href="https://zbruceli.github.io/kai/">zbruceli.github.io/kai</a>, rather than a copy of the file.</p>
     <ul class="soft">
       <li><strong>New Stick:</strong> choose <em>erase</em> when asked. <strong>Updating:</strong> don't erase,
         and the Stick keeps its Wi-Fi and pairing.</li>
@@ -151,9 +153,15 @@
 
 <script>
   // Show the firmware version from the manifest on the install button.
-  fetch("firmware/manifest.json").then(r => r.json()).then(m => {
+  // The firmware sits next to the published page only (CI adds it): a copy opened from the repo has none.
+  fetch("firmware/manifest.json").then(r => {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(m => {
     document.getElementById("fw-version").textContent = ` ${m.version}`;
-  }).catch(() => {});
+  }).catch(() => {
+    document.getElementById("no-firmware").hidden = false;
+  });
 
   // The Stick's own setup lines over USB: send `kai-config {json}`, it answers `kai-config {json}`
   // (firmware/src/provision.cpp). Secrets are never sent back.
