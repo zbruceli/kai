@@ -588,6 +588,7 @@ source = { editable = "." }
 dependencies = [
     { name = "astral" },
     { name = "av" },
+    { name = "cryptography" },
     { name = "google-genai" },
     { name = "httpx" },
     { name = "mcp" },
@@ -613,6 +614,7 @@ dev = [
 requires-dist = [
     { name = "astral", specifier = ">=3.2" },
     { name = "av", specifier = ">=14" },
+    { name = "cryptography", specifier = ">=43" },
     { name = "google-genai", specifier = ">=2.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", specifier = "==2.0.0" },

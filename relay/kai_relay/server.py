@@ -10,12 +10,12 @@ import httpx
 from google import genai
 from websockets.asyncio.server import ServerConnection, serve
 
-from . import discovery, mcp_server, tls, tools
+from . import discovery, mcp_server, pairing, tls, tools
 from .agent import AgentHub, AgentStore
 from .schedule import Scheduler
 from .config import load_settings
 from .hermes import HermesClient
-from .session import KaiSession
+from .session import KaiSession, close_revoked
 
 log = logging.getLogger("kai")
 
@@ -46,6 +46,8 @@ async def run() -> None:
     client = genai.Client(api_key=settings.gemini_api_key)
     notes = tools.NotesStore(settings.data_dir / "kai.db", settings.notes_dir)
     expected_auth = f"Bearer {settings.device_token}"
+    devices = pairing.DeviceStore(settings.data_dir / "devices.db")
+    devices.import_env(settings.device_psks)
 
     async with httpx.AsyncClient(timeout=15, headers={"User-Agent": f"kai-relay/{version('kai-relay')}"}) as http:
         hermes = None
@@ -90,29 +92,38 @@ async def run() -> None:
 
         async with contextlib.AsyncExitStack() as stack:
             listeners = []
-            if settings.device_psks:
-                ctx_tls = tls.server_context(settings.device_psks)
+            encrypted = tls.supported()
+            if encrypted:
+                # Keys come from the device store on every handshake, so kai-approve / kai-revoke apply at once.
                 listeners.append(await stack.enter_async_context(serve(
-                    handler, settings.host, settings.tls_port, ssl=ctx_tls, max_size=MAX_MESSAGE, ping_interval=20)))
-                log.info("Kai relay listening on wss://%s:%d/ws (TLS-PSK, %d device key(s); model %s)",
-                         _lan_ip(), settings.tls_port, len(settings.device_psks), settings.model)
-            if settings.allow_plain:
+                    handler, settings.host, settings.tls_port, ssl=tls.server_context(devices),
+                    max_size=MAX_MESSAGE, ping_interval=20)))
+                log.info("Kai relay listening on wss://%s:%d/ws (TLS-PSK, %d device(s); model %s)",
+                         _lan_ip(), settings.tls_port, devices.approved_count(), settings.model)
+                background.add(asyncio.create_task(_watch_revoked(devices)))
+            # Plain ws:// (the shared token) only when asked for, or while no device has a key yet.
+            if settings.allow_plain or not encrypted or devices.approved_count() == 0:
                 listeners.append(await stack.enter_async_context(serve(
                     handler, settings.host, settings.port, max_size=MAX_MESSAGE, ping_interval=20)))
                 log.info("Kai relay listening on ws://%s:%d/ws (model %s)", _lan_ip(), settings.port, settings.model)
-                if settings.device_psks:
-                    log.warning("plain ws:// is still on (KAI_ALLOW_PLAIN_WS=1): turn it off once every device "
-                                "uses the encrypted link")
-                else:
-                    log.warning("no KAI_DEVICE_PSKS: the link to the Stick is unencrypted (see kai-psk)")
+                log.warning("plain ws:// is on: Sticks on it are unencrypted (pair them, then remove "
+                            "KAI_ALLOW_PLAIN_WS)")
+            pair_port = None
+            if settings.pairing and encrypted:
+                listeners.append(await stack.enter_async_context(serve(
+                    pairing.PairingService(devices).handle, settings.host, settings.pair_port, max_size=4096)))
+                pair_port = settings.pair_port
+                log.info("pairing new Sticks on ws://%s:%d/pair (approve with kai-approve <code>)",
+                         _lan_ip(), settings.pair_port)
             if settings.announce:
-                ip, encrypted = _lan_ip(), bool(settings.device_psks)
+                ip = _lan_ip()
                 if ip.startswith("127."):
                     log.warning("no LAN address: not announcing the relay; Sticks need its address set")
                 else:
                     try:
                         await stack.enter_async_context(discovery.announce(
-                            ip, settings.tls_port if encrypted else settings.port, encrypted, version("kai-relay")))
+                            ip, settings.tls_port if encrypted else settings.port, encrypted, version("kai-relay"),
+                            pair_port))
                     except OSError as e:
                         log.warning("couldn't announce the relay on the LAN (%s); Sticks need its address set", e)
             if settings.home_lat is None:
@@ -120,6 +131,16 @@ async def run() -> None:
             if not settings.maps_api_key:
                 log.warning("GOOGLE_MAPS_API_KEY not set: parking search disabled")
             await asyncio.gather(*(server.serve_forever() for server in listeners))
+
+
+async def _watch_revoked(devices: "pairing.DeviceStore") -> None:
+    """kai-revoke runs in another process: notice it and close that Stick's connection."""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            await close_revoked(lambda name: devices.status(name) == "revoked")
+        except Exception:
+            log.exception("revocation check failed")
 
 
 def main() -> None:

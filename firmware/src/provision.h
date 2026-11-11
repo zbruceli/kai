@@ -6,6 +6,7 @@
 //       {"get": true}                    -> device name, firmware, Wi-Fi name, relay, whether a key is set
 //       {"relay": "host[:port]"}         -> the relay's address ("" clears it: find it on the network)
 //       {"key": "kai-xxxx:<64 hex>"}     -> this Stick's device key, as `kai-psk` prints it
+//       {"unpair": true}                 -> forget the device key: pair with the relay again (with a code)
 //       {"reset": true}                  -> factory reset
 //     Secrets are never sent back.
 #pragma once

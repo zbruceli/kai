@@ -16,6 +16,7 @@
 
 #include "audio.h"
 #include "face.h"
+#include "pairing.h"
 #include "provision.h"
 #include "provision_util.h"
 #include "settings.h"
@@ -26,7 +27,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.13.1";
+static constexpr const char* FW_VERSION = "0.13.2";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -47,6 +48,9 @@ static constexpr uint32_t TIMER_WAKE_CONNECT_MS = 25000;   // give Wi-Fi and the
 // impersonated) relay can't keep waking it to drain the battery.
 static constexpr uint8_t MAX_UNTOUCHED_TIMER_WAKES = 12;
 static constexpr uint16_t RELAY_PLAIN_PORT = 8765;          // only for a relay without device keys
+static constexpr uint16_t RELAY_PAIR_PORT = 8444;           // pairing a new Stick (relay/kai_relay/pairing.py)
+static constexpr uint32_t PAIR_RETRY_MS = 30000;            // after a failed or cancelled pairing
+static constexpr uint32_t APPROVAL_WAIT_MS = 5 * 60000;     // paired but never approved: start over
 // Factory reset: hold the side button this long, then confirm with the front button.
 static constexpr uint32_t RESET_HOLD_MS = 10000;
 static constexpr uint32_t RESET_CONFIRM_MS = 15000;
@@ -102,6 +106,11 @@ static uint32_t wsBeganAt = 0;
 static uint32_t relayLastTry = 0;  // 0: try now
 static bool usedDiscovered = false;  // connecting to the relay found on the network
 static bool rediscover = false;      // ...which stopped answering: look again before the next try
+static uint16_t foundPairPort = 0;   // the pairing port the relay announced (0: use the default)
+static uint32_t pairRetryAt = 0;     // don't start pairing again before this
+static bool pairCardShown = false;
+static bool awaitingApproval = false;  // the owner confirmed a code; the relay hasn't accepted the key yet
+static uint32_t pairedAt = 0;
 static bool resetArmed = false;    // asked "erase settings?", waiting for the front button
 static uint32_t resetArmedAt = 0;
 static bool resetHoldDone = false;
@@ -246,7 +255,7 @@ static void powerSave(uint32_t now) {
   return;  // hold the current state for a measurement run (env:sticks3_powertest)
 #endif
   if (mode != Mode::Idle && mode != Mode::Offline) return;
-  if (earlyTalk) return;
+  if (earlyTalk || pairing::active() || awaitingApproval) return;
   const uint32_t idle = now - lastInteraction;
   if (!dimmed && idle > DIM_AFTER_MS) {
     backlight(BRIGHTNESS_DIM);
@@ -459,6 +468,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
       wsConnected = true;
+      awaitingApproval = false;
       const bool firstConnect = !everConnected;  // the wake reason belongs to this boot's first hello
       everConnected = true;
       connectedSinceBegin = true;
@@ -567,24 +577,25 @@ static bool discoverRelay() {
       }
     }
     for (size_t t = 0; t < r->txt_count; t++) {
-      if (r->txt[t].key && r->txt[t].value && !strcmp(r->txt[t].key, "tls")) a.tls = !strcmp(r->txt[t].value, "1");
+      if (!r->txt[t].key || !r->txt[t].value) continue;
+      if (!strcmp(r->txt[t].key, "tls")) a.tls = !strcmp(r->txt[t].value, "1");
+      if (!strcmp(r->txt[t].key, "pair")) a.pairPort = uint16_t(atoi(r->txt[t].value));
     }
     found[n++] = a;
   }
   mdns_query_results_free(results);
-  const int i = provutil::pickAnnounced(found, n, settings::hasKey());
+  // The encrypted link, unless this Stick only has the legacy token for a plain relay.
+  const int i = provutil::pickAnnounced(found, n, settings::hasKey() || settings::get().token.isEmpty());
   if (i < 0) return false;
   settings::setFound(found[i].ip.c_str(), found[i].port);  // remembered across sleep and power-off
+  foundPairPort = found[i].pairPort;
   return true;
 }
 
 static void startRelayConnection() {
   const auto& c = settings::get();
   usedRelayCache = false;
-  if (!settings::hasKey() && c.token.isEmpty()) {
-    if (!earlyTalk) face::setStatusText("no device key set");
-    return;
-  }
+  const bool needPairing = !settings::hasKey() && c.token.isEmpty();
   // No address set by hand: use the relay found on the network, looking for it if we have none yet or the
   // one we had stopped answering. A failed search keeps the old one: the relay may just be restarting.
   if (c.relayHost.isEmpty() && (c.foundHost.isEmpty() || rediscover)) {
@@ -618,6 +629,14 @@ static void startRelayConnection() {
       cachedRelayIp = uint32_t(ip);
       host = ip.toString();
     }
+  }
+  if (needPairing) {
+    // No key yet: agree one with the relay and let the owner confirm the code (pairing.h).
+    if (!pairing::active() && millis() >= pairRetryAt) {
+      face::setStatusText("pairing with relay...");
+      pairing::start(host, target.discovered && foundPairPort ? foundPairPort : RELAY_PAIR_PORT);
+    }
+    return;
   }
   if (settings::hasKey()) {
     // Encrypted and mutually authenticated (TLS 1.2 ECDHE-PSK): an impostor on the Wi-Fi can't complete
@@ -665,6 +684,17 @@ static void maintainConnection() {
     }
     return;
   }
+  if (awaitingApproval && !wsConnected) {
+    if (now - pairedAt > APPROVAL_WAIT_MS) {  // nobody approved it: forget the key and pair again
+      awaitingApproval = false;
+      settings::clearKey();
+      onRelayChanged();
+      pairRetryAt = 0;
+      face::setStatusText("not approved: pairing again");
+    } else {
+      face::setStatusText("waiting for kai-approve...");
+    }
+  }
   if (wsConnected && mode == Mode::Offline) {  // Wi-Fi blipped but the relay socket survived
     face::setStatusText("");
     setMode(Mode::Idle);
@@ -677,7 +707,8 @@ static void maintainConnection() {
 
   // The relay may have a new address since we cached it: drop the cache and look it up again.
   // The same for the relay found on the network: look for it again before the next try.
-  if (wsStarted && !connectedSinceBegin && (usedRelayCache || usedDiscovered) && now - wsBeganAt > 6000) {
+  if (wsStarted && !connectedSinceBegin && (usedRelayCache || usedDiscovered) && !awaitingApproval &&
+      now - wsBeganAt > 6000) {
     ws.disconnect();
     wsStarted = false;
     cachedRelayIp = 0;
@@ -736,8 +767,44 @@ static bool handleFactoryReset() {
   return true;  // while asking, the buttons mean only yes or no
 }
 
+static void showPairCard() {
+  const String code = pairing::code();
+  Card c;
+  c.title = "Pair with relay";
+  c.lines[c.count++] = String("Code  ") + code.substring(0, 3) + " " + code.substring(3);
+  c.lines[c.count++] = "On the relay, run:";
+  c.lines[c.count++] = String("kai-approve ") + code;
+  c.lines[c.count++] = "then press front button.";
+  c.lines[c.count++] = "Side button: cancel";
+  face::clearReply();
+  showCard(c);
+}
+
+// Only after kai-approve said "Approved" (the relay computed the same code) does the owner press the
+// front button, and only then does the Stick keep the key: that protects the Stick from a fake relay.
+static bool handlePairingButtons() {
+  if (!pairing::showingCode()) return false;
+  if (M5.BtnA.wasPressed()) {
+    pairCardShown = false;
+    if (pairing::confirm()) {
+      awaitingApproval = true;
+      pairedAt = millis();
+      onRelayChanged();
+    }
+    setMode(Mode::Offline);
+  } else if (M5.BtnB.wasClicked()) {
+    pairing::cancel();
+    pairCardShown = false;
+    pairRetryAt = millis() + PAIR_RETRY_MS;
+    face::setStatusText("pairing cancelled");
+    setMode(Mode::Offline);
+  }
+  return true;
+}
+
 static void handleButtons() {
   if (handleFactoryReset()) return;
+  if (handlePairingButtons()) return;
   // With the screen off, the side button only wakes Kai (so it doesn't also scroll or open status).
   if (screenOff && M5.BtnB.wasPressed()) {
     wake();
@@ -829,6 +896,24 @@ void setup() {
 void loop() {
   M5.update();
   provision::poll();  // setup over USB: Improv Wi-Fi and kai-config lines
+  pairing::poll();
+  if (pairing::showingCode()) {
+    if (!pairCardShown) {
+      showPairCard();
+      pairCardShown = true;
+    }
+    lastReplyActivity = millis();  // keep the code on screen until the owner acts (or it expires)
+  } else if (pairCardShown) {      // expired
+    pairCardShown = false;
+    setMode(Mode::Offline);
+  }
+  static bool pairFailedBefore = false;
+  if (pairing::failed() && !pairFailedBefore) {
+    pairRetryAt = millis() + PAIR_RETRY_MS;
+    face::setStatusText(String("pairing: ") + pairing::error());
+    if (usedDiscovered) rediscover = true;
+  }
+  pairFailedBefore = pairing::failed();
   maintainConnection();
   if (wsStarted) ws.loop();
   if (connectBoost && (wsConnected || millis() - wsBeganAt > CONNECT_BOOST_MS)) {

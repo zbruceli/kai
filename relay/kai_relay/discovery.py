@@ -20,22 +20,26 @@ log = logging.getLogger("kai.discovery")
 SERVICE = "_kai._tcp.local."
 
 
-def service_info(ip: str, port: int, tls: bool, version: str, hostname: str | None = None) -> ServiceInfo:
+def service_info(ip: str, port: int, tls: bool, version: str, hostname: str | None = None,
+                 pair_port: int | None = None) -> ServiceInfo:
     host = (hostname or socket.gethostname()).split(".")[0] or "relay"
+    props = {"v": version, "tls": "1" if tls else "0", "path": "/ws"}
+    if pair_port:
+        props["pair"] = str(pair_port)  # where a new Stick pairs (kai_relay/pairing.py)
     return ServiceInfo(
         SERVICE,
         f"Kai relay on {host}.{SERVICE}",
         addresses=[socket.inet_aton(ip)],
         port=port,
-        properties={"v": version, "tls": "1" if tls else "0", "path": "/ws"},
+        properties=props,
         server=f"{host}.local.",
     )
 
 
 @contextlib.asynccontextmanager
-async def announce(ip: str, port: int, tls: bool, version: str):
+async def announce(ip: str, port: int, tls: bool, version: str, pair_port: int | None = None):
     """Announce while the relay runs; withdraw the record on the way out."""
-    info = service_info(ip, port, tls, version)
+    info = service_info(ip, port, tls, version, pair_port=pair_port)
     # Only on the LAN address: not on Docker's bridge (where Hermes runs) or other virtual interfaces.
     zc = AsyncZeroconf(interfaces=[ip], ip_version=IPVersion.V4Only)
     try:

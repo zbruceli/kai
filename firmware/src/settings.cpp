@@ -132,6 +132,21 @@ bool setKey(const String& identity, const String& hex) {
   return true;
 }
 
+void clearKey() {
+  prefs.begin(NS, false);
+  prefs.remove("key_id");
+  prefs.remove("key");
+  prefs.end();
+  cfg.keyId = cfg.keyHex = "";
+}
+
+void clearToken() {
+  prefs.begin(NS, false);
+  prefs.remove("token");
+  prefs.end();
+  cfg.token = "";
+}
+
 void factoryReset() {
   prefs.begin(NS, false);
   prefs.clear();

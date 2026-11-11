@@ -15,6 +15,7 @@ dependencies = [
     "mcp==2.0.0", # Kai MCP server for Hermes (same pin as Hermes itself)
     "uvicorn>=0.30",
     "zeroconf>=0.147",
+    "cryptography>=43",  # pairing: X25519 + HKDF (kai_relay/pairing.py)
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,10 @@ sim = ["sounddevice>=0.5"]
 kai-relay = "kai_relay.server:main"
 kai-sim = "kai_relay.sim_device:main"
 kai-power = "kai_relay.power:main"
+kai-devices = "kai_relay.pairing:devices_main"
+kai-approve = "kai_relay.pairing:approve_main"
+kai-revoke = "kai_relay.pairing:revoke_main"
+kai-pair = "kai_relay.pairing:pair_main"
 kai-psk = "kai_relay.tls:main"
 
 [dependency-groups]

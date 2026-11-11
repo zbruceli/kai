@@ -33,7 +33,10 @@ class Settings:
     # listener is off unless KAI_ALLOW_PLAIN_WS=1 (for old firmware or a simulator during a migration).
     device_psks: dict = field(default_factory=dict)
     tls_port: int = 8443
-    allow_plain: bool = True
+    allow_plain: bool = False  # KAI_ALLOW_PLAIN_WS=1; the relay also allows it while no device has a key
+    # Pairing a new Stick with a code (kai_relay/pairing.py): plain WebSocket on its own port.
+    pairing: bool = True
+    pair_port: int = 8444
     # Announce the relay on the LAN (mDNS `_kai._tcp`) so a Stick without a relay address can find it.
     announce: bool = True
 
@@ -67,7 +70,7 @@ def load_settings() -> Settings:
         device_psks = tls.parse_psks(env.get("KAI_DEVICE_PSKS"))
     except ValueError as e:
         raise SystemExit(f"KAI_DEVICE_PSKS: {e}") from None
-    allow_plain = not device_psks or env.get("KAI_ALLOW_PLAIN_WS", "0") == "1"
+    allow_plain = env.get("KAI_ALLOW_PLAIN_WS", "0") == "1"
 
     units = env.get("KAI_UNITS", "imperial").lower()
     if units not in ("imperial", "metric"):
@@ -97,4 +100,6 @@ def load_settings() -> Settings:
         tls_port=int(env.get("KAI_TLS_PORT", "8443")),
         allow_plain=allow_plain,
         announce=env.get("KAI_ANNOUNCE", "1") != "0",
+        pairing=env.get("KAI_PAIRING", "1") != "0",
+        pair_port=int(env.get("KAI_PAIR_PORT", "8444")),
     )

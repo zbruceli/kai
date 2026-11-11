@@ -167,6 +167,11 @@ void handleConfig(const String& json) {
       ok = false, error = "bad key (expected kai-xxxx:<64 hex>)";
     }
   }
+  if (in["unpair"] | false) {  // forget the device key (and legacy token): pair again on the next connect
+    settings::clearKey();
+    settings::clearToken();
+    relayChanged = true;
+  }
   if (in["reset"] | false) {
     settings::factoryReset();
     out["ok"] = true;

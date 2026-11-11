@@ -29,6 +29,8 @@ void setWifi(const String& ssid, const String& pass);
 bool setRelay(const String& hostPort);                    // "host" or "host:port"; "" clears it
 void setFound(const String& host, uint16_t port);         // remember the relay found on the network
 bool setKey(const String& identity, const String& hex);   // validated; false if malformed
+void clearKey();            // forget the device key (a pairing the relay never approved)
+void clearToken();          // forget the legacy shared token
 void factoryReset();        // erase everything (stays erased: secrets.h is not re-applied)
 
 }  // namespace settings

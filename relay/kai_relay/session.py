@@ -76,6 +76,14 @@ def _short(value) -> str:
     return re.sub(r"[^\w.%-]", "", str(value))[:16]
 
 
+async def close_revoked(is_revoked) -> None:
+    """Close the connections of devices that have been revoked (kai-revoke)."""
+    for name, session in list(_ACTIVE.items()):
+        if is_revoked(name):
+            log.info("[%s] revoked: closing its connection", name)
+            await session.ws.close(4003, "revoked")
+
+
 class KaiSession:
     def __init__(self, ws: ServerConnection, client: genai.Client, ctx: tools.ToolContext, settings: Settings):
         self.ws = ws

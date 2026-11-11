@@ -91,14 +91,15 @@ struct Announced {
   std::string ip;
   uint16_t port;
   bool tls;
+  uint16_t pairPort = 0;  // where a new Stick pairs (TXT "pair"); 0 if the relay doesn't say
 };
 
-// The first announced relay this Stick can use: the encrypted link when it has a device key, the plain
-// one when it only has the legacy token. -1 if none fits.
-inline int pickAnnounced(const Announced* found, size_t n, bool haveKey) {
+// The first announced relay this Stick can use: the encrypted link (also where a Stick without a key
+// pairs), or the plain one when the Stick only has the legacy token. -1 if none fits.
+inline int pickAnnounced(const Announced* found, size_t n, bool wantTls) {
   for (size_t i = 0; i < n; i++) {
     if (found[i].ip.empty() || found[i].port == 0) continue;
-    if (found[i].tls == haveKey) return int(i);
+    if (found[i].tls == wantTls) return int(i);
   }
   return -1;
 }
