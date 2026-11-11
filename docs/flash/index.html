@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Kai</title>
+<meta name="description" content="Flash Kai onto an M5StickS3 from the browser, give it Wi-Fi, and pair it with your relay.">
+<!-- ESP Web Tools (Apache-2.0): flashing and Improv Wi-Fi over Web Serial. Pinned to an exact version. -->
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+  :root {
+    --bg: #fff3e3; --card: #fffaf3; --ink: #4b3a63; --soft: #7d6f95; --line: #eadcc9;
+    --lilac: #cdb9ff; --violet: #9d86e9; --pink: #ff9fb8; --sun: #ffc94d; --ok: #4f9d74; --bad: #c44b6c;
+    --code: #f4e8d8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16111f; --card: #1e1729; --ink: #efe6ff; --soft: #a99bc4; --line: #2e2540;
+      --lilac: #cdb9ff; --violet: #9d86e9; --ok: #7fd1a5; --bad: #ff8fab; --code: #2a2138;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+  header { display: flex; gap: 20px; align-items: center; margin-bottom: 28px; }
+  header img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 20px; background: #16111f; }
+  h1 { margin: 0; font-size: 2rem; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--soft); }
+  h2 { font-size: 1.15rem; margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
+  h2 .n {
+    flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--lilac); color: #2a1f3d;
+    display: inline-grid; place-items: center; font-size: 0.95rem;
+  }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin: 16px 0; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .soft { color: var(--soft); font-size: 0.93rem; }
+  code, kbd {
+    font: 0.9em ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 6px; border-radius: 6px;
+  }
+  pre { background: var(--code); padding: 10px 14px; border-radius: 10px; overflow-x: auto; margin: 8px 0; }
+  pre code { padding: 0; background: none; }
+  a { color: var(--violet); }
+  button, .btn {
+    font: inherit; font-weight: 600; border: 0; border-radius: 999px; padding: 10px 20px; cursor: pointer;
+    background: var(--violet); color: #fff;
+  }
+  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  input[type=text] {
+    font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 12px; min-width: 0; flex: 1 1 220px;
+  }
+  .warn { border-left: 4px solid var(--sun); padding: 6px 12px; background: var(--code); border-radius: 8px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0 0; }
+  dt { color: var(--soft); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #status-msg { min-height: 1.5em; }
+  footer { color: var(--soft); font-size: 0.9rem; margin-top: 28px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="kai-moods.gif" alt="Kai's face cycling through its moods">
+    <div>
+      <h1>Set up Kai</h1>
+      <p>Flash a Stick, give it Wi-Fi and pair it with your relay. It all happens over USB, in this browser.</p>
+    </div>
+  </header>
+
+  <section>
+    <h2>Before you start</h2>
+    <ul>
+      <li>An <strong>M5StickS3</strong> and a USB-C cable that carries data.</li>
+      <li>A desktop browser with Web Serial: <strong>Chrome</strong> or <strong>Edge</strong>.</li>
+      <li>A <a href="https://github.com/zbruceli/kai#setup">Kai relay</a> already running on your home network.
+        The Stick finds it by itself.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">1</span>Flash and connect to Wi-Fi</h2>
+    <p>Plug the Stick in, then press <em>Install</em> and pick its port.</p>
+    <div class="row">
+      <esp-web-install-button manifest="firmware/manifest.json">
+        <button slot="activate">Install Kai<span id="fw-version"></span></button>
+        <span slot="unsupported" class="warn">This browser can't talk to USB devices. Open this page in desktop Chrome or Edge.</span>
+        <span slot="not-allowed" class="warn">Flashing only works over HTTPS. Open this page from its https:// address.</span>
+      </esp-web-install-button>
+    </div>
+    <ul class="soft">
+      <li><strong>New Stick:</strong> choose <em>erase</em> when asked. <strong>Updating:</strong> don't erase,
+        and the Stick keeps its Wi-Fi and pairing.</li>
+      <li>After flashing, enter your Wi-Fi network and password. They go over the cable to the Stick, which saves
+        them only once it has joined that network.</li>
+      <li>No port in the list? Hold the side button for about 2 seconds, until the green light blinks
+        (download mode), and try again.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>Pair it with your relay</h2>
+    <p>Once on Wi-Fi, the Stick finds the relay and shows a 6-digit code. On the relay, run:</p>
+    <pre><code>cd ~/kai/relay &amp;&amp; uv run kai-approve 123456</code></pre>
+    <p>with the code from the Stick. If the relay shows the same code, it accepts the Stick. Then
+      <strong>press the front button</strong> on the Stick to keep the key.</p>
+    <p class="soft">Codes that don't match mean something on the network is in between: press the side button
+      to cancel. Nothing secret crosses the network: the Stick and relay each work out the same key, and the
+      code proves they did. The code lasts 5 minutes; to skip typing it, run <code>uv run kai-pair --open 5</code>
+      first and the next Stick that asks is accepted.</p>
+    <p>That's it: hold the front button and talk.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>Check or adjust the Stick <span class="soft">(optional)</span></h2>
+    <p>Close the install window first: only one page can use the port at a time.</p>
+    <div class="row">
+      <button id="connect">Connect to the Stick</button>
+      <button id="disconnect" class="quiet" hidden>Disconnect</button>
+    </div>
+    <p id="status-msg" class="soft" role="status"></p>
+    <div id="panel" hidden>
+      <dl id="status"></dl>
+      <h3 style="font-size:1rem;margin:20px 0 4px">Relay address</h3>
+      <p class="soft">Leave it empty to let the Stick find the relay on the network. Set one when the relay
+        is somewhere discovery doesn't reach, like another subnet.</p>
+      <div class="row">
+        <input id="relay" type="text" placeholder="found automatically" spellcheck="false" autocomplete="off"
+               aria-label="Relay address (host or host:port)">
+        <button id="save-relay">Save</button>
+      </div>
+      <h3 style="font-size:1rem;margin:20px 0 4px">Pair again</h3>
+      <p class="soft">Forget this Stick's key, for a new relay or after <code>kai-revoke</code>. It shows a new code.</p>
+      <div class="row"><button id="unpair" class="quiet">Forget the key</button></div>
+    </div>
+  </section>
+
+  <footer>
+    This page has no server: it only talks to the Stick over USB. The firmware holds no passwords or keys;
+    those stay on your Stick. <a href="https://github.com/zbruceli/kai">Source on GitHub</a> (MIT).
+  </footer>
+</main>
+
+<script>
+  // Show the firmware version from the manifest on the install button.
+  fetch("firmware/manifest.json").then(r => r.json()).then(m => {
+    document.getElementById("fw-version").textContent = ` ${m.version}`;
+  }).catch(() => {});
+
+  // The Stick's own setup lines over USB: send `kai-config {json}`, it answers `kai-config {json}`
+  // (firmware/src/provision.cpp). Secrets are never sent back.
+  const $ = id => document.getElementById(id);
+  const msg = (text, cls = "soft") => { $("status-msg").textContent = text; $("status-msg").className = cls; };
+  let port = null, reader = null, waiting = null;
+
+  if (!("serial" in navigator)) {
+    $("connect").disabled = true;
+    msg("This browser can't talk to USB devices: use desktop Chrome or Edge.");
+  }
+
+  async function readLoop() {
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      while (port && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.search(/[\r\n]/)) >= 0) {
+              const line = buf.slice(0, nl);
+              buf = buf.slice(nl + 1);
+              const at = line.indexOf("kai-config {");
+              if (at >= 0 && waiting) {
+                try { const reply = JSON.parse(line.slice(at + 11)); waiting(reply); waiting = null; } catch {}
+              }
+            }
+            if (buf.length > 4096) buf = "";
+          }
+        } finally {
+          reader.releaseLock();
+          reader = null;
+        }
+      }
+    } catch (e) {
+      msg(`Lost the connection: ${e.message}`, "bad");
+      teardown();
+    }
+  }
+
+  async function request(obj) {
+    // The Stick may be busy or booting: ask a few times.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const reply = new Promise(resolve => { waiting = resolve; setTimeout(() => resolve(null), 2000); });
+      const writer = port.writable.getWriter();
+      try { await writer.write(new TextEncoder().encode(`\nkai-config ${JSON.stringify(obj)}\n`)); }
+      finally { writer.releaseLock(); }
+      const r = await reply;
+      if (r) return r;
+    }
+    throw new Error("the Stick didn't answer (is it running Kai, and is the install window closed?)");
+  }
+
+  function show(s) {
+    const rows = [
+      ["Device", s.device],
+      ["Firmware", s.fw],
+      ["Wi-Fi", s.wifi ? `${s.wifi} (${s.wifi_connected ? "connected" : "not connected"})` : "not set"],
+      ["Relay", s.relay ? `${s.relay} (set by hand)` : s.found ? `${s.found} (found on the network)` : "not found yet"],
+      ["Paired", s.key ? `yes, as ${s.key}` : "no"],
+      ["Pairing", s.pairing],
+    ];
+    const dl = $("status");
+    dl.replaceChildren();
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v ?? "";
+      dl.append(dt, dd);
+    }
+    $("relay").value = s.relay || "";
+    $("panel").hidden = false;
+  }
+
+  async function run(obj, done) {
+    try {
+      const r = await request(obj);
+      show(r);
+      if (r.ok === false) msg(`The Stick said no: ${r.error}`, "bad");
+      else msg(done, "ok");
+    } catch (e) {
+      msg(e.message, "bad");
+    }
+  }
+
+  async function teardown() {
+    const p = port;
+    port = null;
+    try { if (reader) await reader.cancel(); } catch {}
+    try { if (p) await p.close(); } catch {}
+    $("connect").hidden = false;
+    $("disconnect").hidden = true;
+    $("panel").hidden = true;
+  }
+
+  $("connect").addEventListener("click", async () => {
+    try {
+      port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] });  // Espressif USB
+      await port.open({ baudRate: 115200 });
+    } catch (e) {
+      port = null;
+      if (e.name !== "NotFoundError") msg(`Couldn't open the port: ${e.message}`, "bad");
+      return;
+    }
+    $("connect").hidden = true;
+    $("disconnect").hidden = false;
+    msg("Asking the Stick…");
+    readLoop();
+    run({}, "Connected.");
+  });
+
+  $("disconnect").addEventListener("click", () => { teardown(); msg("Disconnected."); });
+
+  $("save-relay").addEventListener("click", () => {
+    const relay = $("relay").value.trim();
+    run({ relay }, relay ? `Saved: the Stick now uses ${relay}.` : "Cleared: the Stick finds the relay on the network.");
+  });
+
+  $("unpair").addEventListener("click", () => {
+    if (!confirm("Forget this Stick's key? It will show a new code to approve on the relay.")) return;
+    run({ unpair: true }, "Key forgotten: approve the new code the Stick shows.");
+  });
+</script>
+</body>
+</html>

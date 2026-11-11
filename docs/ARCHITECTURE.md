@@ -75,6 +75,11 @@ arrives, so the answer isn't lost.
 | `voice_codec.cpp` | Opus (libopus 1.6.1, fixed point): mic encode at complexity 1 (~6.4 ms per 20 ms frame at 240 MHz), speech decode (~3.9 ms) |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
+**Releases:** one firmware for every Stick, with no secrets in it. Settings live in NVS and are set after
+flashing: Wi-Fi over Improv, the relay by discovery, the key by pairing. On each `v*` tag, CI builds it
+(`firmware/scripts/package_release.py`) and deploys the flasher page (`docs/flash/`) with it to GitHub Pages.
+The page writes the parts at their offsets and skips NVS (0x9000), so an update keeps the settings.
+
 **Power (on battery):** dim after 15 s, deep sleep after 45 s; the CPU runs at 80 MHz and Wi-Fi naps whenever no audio streams, and deep sleep cuts the LCD/audio rail (details in `POWER.md`). Buttons (GPIO 11/12) wake it
 through EXT1. The Wi-Fi channel/BSSID and the relay IP are kept in RTC memory so reconnecting is fast.
 Waking with the front button held records straight into PSRAM, and that audio is sent once the relay

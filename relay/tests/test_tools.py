@@ -290,6 +290,26 @@ def test_token_only_needed_without_tls():
                        "plain, right token": True}
 
 
+def test_device_token_is_optional(monkeypatch):
+    """A relay whose Sticks all paired needs no token: plain ws:// then admits nobody, even a blank header."""
+    from kai_relay import config
+    from kai_relay.server import device_authorized
+
+    monkeypatch.setattr(config, "load_dotenv", lambda: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("KAI_DEVICE_TOKEN", raising=False)
+    assert config.load_settings().device_token is None
+    monkeypatch.setenv("KAI_DEVICE_TOKEN", "change-me")
+    with pytest.raises(SystemExit):
+        config.load_settings()
+
+    class PlainWs:  # no TLS on the transport
+        transport = type("T", (), {"get_extra_info": staticmethod(lambda name: None)})()
+        request = type("R", (), {"headers": {"Authorization": ""}})()
+
+    assert device_authorized(PlainWs(), None) is False
+
+
 def test_relay_announcement_record():
     """What a Stick looking for `_kai._tcp` gets: the LAN address, the encrypted port, tls=1 and the path."""
     import socket

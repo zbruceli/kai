@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+**Set up a Stick from the browser** (provisioning phase 4 of 4):
+- **[Flasher page](https://zbruceli.github.io/kai/)** (`docs/flash/`, on GitHub Pages): flash, then Wi-Fi
+  over Improv, with ESP Web Tools 10.4.0, in desktop Chrome or Edge. It then explains pairing, and can
+  check a plugged-in Stick (device, Wi-Fi, relay, pairing state), set or clear a relay address, or forget
+  the key. It has no server: everything goes over USB.
+- **Updates keep settings.** The page writes the bootloader, partition table and app separately and skips
+  the settings area, so updating without erasing keeps Wi-Fi and the key. (One merged image, padded over
+  that area, would have wiped them.)
+- **Released firmware:** `.github/workflows/firmware.yml` builds the generic firmware on each `v*` tag
+  (`firmware/scripts/package_release.py`, which refuses to run next to a `secrets.h`), attaches the image,
+  its parts, the manifest and checksums to the release, and deploys the page with them.
+- **Relay:** `KAI_DEVICE_TOKEN` is now optional. Without it, plain `ws://` is off; paired Sticks don't need
+  it. The README setup is now: start the relay, open the page, approve the code.
+- **Tested:** the generic build (none of the `secrets.h` values in the image) written in parts without
+  erasing kept the Stick's Wi-Fi and key, and it reconnected within 5 s. The page's status and relay
+  commands were checked over USB on the Stick, and the page itself in light, dark and at phone width.
+
 **Pairing a new Stick with a code** (provisioning phase 3 of 4):
 - **No more copying keys by hand.** A Stick without a device key agrees one with the relay (X25519,
   HKDF-SHA512) on the pairing port (8444, `/pair`) and shows a 6-digit code. Run `kai-approve <code>` on

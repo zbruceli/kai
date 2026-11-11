@@ -126,8 +126,7 @@ it, and hear back from it, away from a keyboard.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/zbruceli/kai ~/kai && cd ~/kai/relay
-cp .env.example .env && chmod 600 .env && nano .env   # GEMINI_API_KEY, KAI_DEVICE_TOKEN, KAI_HOME_*
-uv run kai-psk kai-stick1                             # a device key: KAI_DEVICE_PSKS line into .env
+cp .env.example .env && chmod 600 .env && nano .env   # GEMINI_API_KEY, KAI_HOME_*
 uv sync --frozen && uv run kai-relay                  # prints wss://<server-ip>:8443/ws
 ```
 - **Keys:** get a Gemini key from [AI Studio](https://aistudio.google.com/apikey). Parking also needs a
@@ -136,20 +135,27 @@ uv sync --frozen && uv run kai-relay                  # prints wss://<server-ip>
   `loginctl enable-linger "$USER"` and `systemctl --user enable --now kai-relay`.
 - **Logs:** `journalctl --user -u kai-relay -f` shows the transcript and tool calls.
 - **Update:** `git pull && uv sync --frozen && systemctl --user restart kai-relay`.
-- **Fixed IP:** give the server a DHCP reservation, because the Stick connects to its IP.
+- **Found on the LAN:** the relay announces itself (mDNS), so Sticks find it by themselves. Across subnets,
+  set its address from the flasher page (step 3, "Check or adjust").
 
 **2. Slow path (optional):** Hermes in Docker. Follow [relay/deploy/hermes/README.md](relay/deploy/hermes/README.md):
 `docker compose up -d`, a few secrets, then `./configure.sh`. Without it, Kai simply has no `ask_agent`.
 
-**3. Stick.**
-```bash
-cd firmware && cp src/secrets.example.h src/secrets.h   # Wi-Fi, RELAY_HOST, token, the kai-psk lines
-pio run -t upload
-```
-If the port isn't found, hold the side button ~2 s until the green LED blinks (download mode). Builds
-embed your Wi-Fi password, token and device key, so releases are source only; never share a built
-`firmware.bin`. The link to the relay is encrypted and mutually authenticated (TLS-PSK); see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**3. Stick:** open the **[flasher page](https://zbruceli.github.io/kai/)** in desktop Chrome or Edge.
+1. Plug the Stick in and press *Install* (choose *erase* for a new Stick).
+2. Enter your Wi-Fi when asked; it goes over USB to the Stick.
+3. The Stick finds the relay and shows a 6-digit code. On the relay, run `uv run kai-approve <code>`; if it
+   shows the same code, press the Stick's front button.
+
+The firmware holds no passwords or keys: Wi-Fi and the device key live on the Stick, and updating from the
+page (without erasing) keeps them. The key is agreed during pairing (X25519), never typed or sent; the link
+to the relay is encrypted and mutually authenticated (TLS-PSK). Manage Sticks with `uv run kai-devices` and
+`uv run kai-revoke <name>`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**From source:** `cd firmware && pio run -t upload`. A `src/secrets.h` (from `secrets.example.h`) is
+optional: it seeds Wi-Fi, a relay address or a key into the Stick's settings once. A build with it embeds
+those secrets, so never share it. If the port isn't found, hold the side button ~2 s until the green LED
+blinks (download mode).
 
 **Without a Stick:** `uv sync --extra sim && uv run kai-sim --host <server-ip>` talks to the relay through
 the Mac's mic and speakers. Give it its own key: `KAI_SIM_PSK=kai-sim:<hex>` in `.env`, with the same entry

@@ -1,0 +1,84 @@
+# Builds the firmware every Stick can run (no secrets.h: Wi-Fi, relay and key are set after flashing) and
+# publishes the web flasher page (docs/flash) with it on GitHub Pages.
+#
+# - A tag v*: build, attach the image to that tag's release (a draft is made if there's none yet), and
+#   deploy the page with this firmware.
+# - Run by hand (Actions → Firmware → Run workflow): build the chosen branch and deploy the page with it.
+name: Firmware
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install platformio==6.2.0
+      - name: Build and package
+        run: python3 firmware/scripts/package_release.py --out site/firmware
+      - name: Assemble the page
+        run: cp -R docs/flash/. site/ && cp docs/images/kai-moods.gif site/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: firmware
+          path: site/firmware/
+          if-no-files-found: error
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: site/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: firmware
+          path: firmware/
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          files=(firmware/*)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "${files[@]}" --draft --verify-tag --title "$TAG" \
+              --notes "Firmware built from $TAG. Flash it from https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+  pages:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1

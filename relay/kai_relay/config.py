@@ -10,7 +10,7 @@ from . import tls
 @dataclass(frozen=True)
 class Settings:
     gemini_api_key: str
-    device_token: str
+    device_token: str | None  # only for plain ws://; None turns plain ws:// off
     model: str
     voice: str
     home_name: str
@@ -53,11 +53,12 @@ def load_settings() -> Settings:
     load_dotenv()
     env = os.environ
 
-    missing = [k for k in ("GEMINI_API_KEY", "KAI_DEVICE_TOKEN") if not env.get(k)]
-    if missing:
-        raise SystemExit(f"Missing required settings: {', '.join(missing)} (see .env.example)")
+    if not env.get("GEMINI_API_KEY"):
+        raise SystemExit("Missing required setting: GEMINI_API_KEY (see .env.example)")
 
-    if env["KAI_DEVICE_TOKEN"] == "change-me" or len(env["KAI_DEVICE_TOKEN"]) < 12:
+    # Optional: only Sticks on plain ws:// use it. Paired Sticks are identified by their key.
+    device_token = env.get("KAI_DEVICE_TOKEN") or None
+    if device_token and (device_token == "change-me" or len(device_token) < 12):
         raise SystemExit("KAI_DEVICE_TOKEN is the example value or too short; generate one with:\n"
                          "  python3 -c 'import secrets; print(secrets.token_urlsafe(18))'")
 
@@ -79,7 +80,7 @@ def load_settings() -> Settings:
     data_dir = Path(env.get("KAI_DATA_DIR", "./data")).expanduser()
     return Settings(
         gemini_api_key=env["GEMINI_API_KEY"],
-        device_token=env["KAI_DEVICE_TOKEN"],
+        device_token=device_token,
         model=env.get("KAI_MODEL", "gemini-3.8-live"),
         voice=env.get("KAI_VOICE", "Puck"),
         home_name=env.get("KAI_HOME_NAME", "Home"),

@@ -32,12 +32,14 @@ def _lan_ip() -> str:
             return "127.0.0.1"
 
 
-def device_authorized(ws, expected_auth: str) -> bool:
+def device_authorized(ws, expected_auth: str | None) -> bool:
     """Over the encrypted link the TLS-PSK handshake has already proved the device's own key, which is
     what identifies it, so no shared token is needed (Sticks set up without secrets.h don't have one).
     The token still guards the plain ws:// fallback for relays without device keys."""
     if ws.transport.get_extra_info("ssl_object") is not None:
         return True
+    if not expected_auth:
+        return False  # no token set: plain ws:// has no way to tell a Stick from anyone else
     return hmac.compare_digest(ws.request.headers.get("Authorization", ""), expected_auth)
 
 
@@ -45,7 +47,7 @@ async def run() -> None:
     settings = load_settings()
     client = genai.Client(api_key=settings.gemini_api_key)
     notes = tools.NotesStore(settings.data_dir / "kai.db", settings.notes_dir)
-    expected_auth = f"Bearer {settings.device_token}"
+    expected_auth = f"Bearer {settings.device_token}" if settings.device_token else None
     devices = pairing.DeviceStore(settings.data_dir / "devices.db")
     devices.import_env(settings.device_psks)
 
@@ -93,6 +95,9 @@ async def run() -> None:
         async with contextlib.AsyncExitStack() as stack:
             listeners = []
             encrypted = tls.supported()
+            if not encrypted and not settings.device_token:
+                raise SystemExit("This Python's ssl module has no TLS-PSK, so Sticks can only use plain ws://, "
+                                 "which needs KAI_DEVICE_TOKEN (see .env.example)")
             if encrypted:
                 # Keys come from the device store on every handshake, so kai-approve / kai-revoke apply at once.
                 listeners.append(await stack.enter_async_context(serve(
@@ -102,7 +107,7 @@ async def run() -> None:
                          _lan_ip(), settings.tls_port, devices.approved_count(), settings.model)
                 background.add(asyncio.create_task(_watch_revoked(devices)))
             # Plain ws:// (the shared token) only when asked for, or while no device has a key yet.
-            if settings.allow_plain or not encrypted or devices.approved_count() == 0:
+            if settings.device_token and (settings.allow_plain or not encrypted or devices.approved_count() == 0):
                 listeners.append(await stack.enter_async_context(serve(
                     handler, settings.host, settings.port, max_size=MAX_MESSAGE, ping_interval=20)))
                 log.info("Kai relay listening on ws://%s:%d/ws (model %s)", _lan_ip(), settings.port, settings.model)
