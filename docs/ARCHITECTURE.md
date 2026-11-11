@@ -18,8 +18,8 @@ M5StickS3 (firmware/)            Raspberry Pi or Mac (relay/)                 Go
 
 One WebSocket at `/ws`. With device keys configured (the default setup), the transport is
 `wss://…:8443` with TLS 1.2 ECDHE-PSK:
-- **Keys:** a per-device 32-byte pre-shared key (`kai-psk`), so both sides authenticate each other in the
-  handshake.
+- **Keys:** a per-device 32-byte pre-shared key, so both sides authenticate each other in the handshake.
+  It is agreed by pairing (below), or made by hand with `kai-psk`.
 - **Pairing:** a new Stick agrees its key with the relay (`kai_relay/pairing.py`): X25519 and HKDF-SHA512,
   with a commitment so a man in the middle shows up as mismatched 6-digit codes. The owner approves with
   `kai-approve <code>`; keys live in `data/devices.db`, read on every handshake.
@@ -28,8 +28,9 @@ One WebSocket at `/ws`. With device keys configured (the default setup), the tra
 - **Firmware:** the WebSockets library gets a small build-time patch
   (`firmware/scripts/patch_websockets.py`) that adds `beginSslWithPsk`.
 
-Inside, the Stick still sends `Authorization: Bearer <KAI_DEVICE_TOKEN>`. The canonical
-definition is the docstring at the top of `relay/kai_relay/session.py`.
+On the encrypted link the key identifies the Stick, so it sends no token. Only a Stick built with a legacy
+`KAI_DEVICE_TOKEN` (in `secrets.h`) sends `Authorization: Bearer <token>`, which plain `ws://` requires. The
+canonical definition is the docstring at the top of `relay/kai_relay/session.py`.
 
 | Direction | Message | Meaning |
 |---|---|---|
@@ -175,13 +176,19 @@ Stick ─wss─▶ relay ──▶ Gemini Live          (fast path)
 
 ## Security
 
-- **API keys** live only on the relay (`relay/.env`, git-ignored). The Stick holds its Wi-Fi password,
-  device token and device key (`firmware/src/secrets.h`, git-ignored). These sit in plain flash, so
-  revoke a lost Stick's key on the relay.
-- The device token is compared in constant time, and the relay refuses to start with the example
-  token.
+- **API keys** live only on the relay (`relay/.env`, git-ignored). The Stick holds its Wi-Fi password and
+  device key in its settings (NVS), set over USB and by pairing; the published firmware contains neither.
+  They sit in plain flash, so revoke a lost Stick with `kai-revoke <name>`, which also closes its open
+  connection.
+- **Pairing** is a numeric comparison: the relay commits to its nonce first, so a man in the middle shows
+  up as two different codes, and nothing secret crosses the network. The pairing port allows one request
+  per address every 10 s and at most 3 waiting, each for 5 minutes; only `kai-approve` on the relay (or a
+  `kai-pair --open` window) accepts one.
+- **Discovery isn't trust:** anyone can announce `_kai._tcp`, but a fake relay can't complete the TLS-PSK
+  handshake without the Stick's key.
 - **Link:** traffic between the Stick and the relay is encrypted and mutually authenticated (TLS-PSK).
-  Without device keys the relay falls back to plain `ws://` and says so at startup.
+  Plain `ws://` runs only with a `KAI_DEVICE_TOKEN` set, and then only while no Stick has a key or with
+  `KAI_ALLOW_PLAIN_WS=1`. The token is compared in constant time, and the relay refuses the example value.
 - **Text from outside is data, not commands:**
   - Hermes reads the web, so anything it returns can carry prompt injection.
   - Updates are spoken with tools switched off for that turn.

@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## v0.13.0: set up a Stick from the browser
+
+A new Stick now needs no build tools and no copied keys. Open the
+[flasher page](https://zbruceli.github.io/kai/), install Kai, give it Wi-Fi, and approve the 6-digit code it
+shows. The published firmware is the same for every Stick and holds no secrets; the Stick finds the relay on
+the home network by itself. This release also makes timer wakes reconcile with the relay. Firmware 0.13.2,
+relay 0.13.2.
+
+**Upgrade** (existing Sticks keep working throughout):
+1. **Relay:** `git pull && uv sync --frozen`, then restart it. Keys in `KAI_DEVICE_PSKS` are copied into
+   `data/devices.db` on the first start; `uv run kai-devices` lists them.
+2. **Sticks:** connect each one on the flasher page and choose *Update*, which keeps its Wi-Fi and key. Or
+   build from source as before: an existing `secrets.h` is copied into the Stick's settings once.
+3. **Firewall** (if the relay host has one): allow the pairing port (TCP 8444) and mDNS (UDP 5353) on the LAN.
+4. **Optional:** once every Stick is on the encrypted link, remove `KAI_DEVICE_TOKEN` from `relay/.env`,
+   which turns plain `ws://` off.
 
 **Set up a Stick from the browser** (provisioning phase 4 of 4):
 - **[Flasher page](https://zbruceli.github.io/kai/)** (`docs/flash/`, on GitHub Pages), in desktop Chrome or
@@ -18,9 +33,12 @@
   its parts, the manifest and checksums to the release, and deploys the page with them.
 - **Relay:** `KAI_DEVICE_TOKEN` is now optional. Without it, plain `ws://` is off; paired Sticks don't need
   it. The README setup is now: start the relay, open the page, approve the code.
-- **Tested:** the generic build (none of the `secrets.h` values in the image) written in parts without
-  erasing kept the Stick's Wi-Fi and key, and it reconnected within 5 s. The page's status and relay
-  commands were checked over USB on the Stick, and the page itself in light, dark and at phone width.
+- **Tested:**
+  - the published build contains none of the `secrets.h` values;
+  - on the Stick: erased and installed from the page, Wi-Fi set there, paired with a code, and connected;
+    then updated from the page, keeping Wi-Fi and pairing;
+  - the page against a simulated Stick (status, network list, a refused password, joining, relay address,
+    restart), in light and dark mode and at phone width.
 
 **Pairing a new Stick with a code** (provisioning phase 3 of 4):
 - **No more copying keys by hand.** A Stick without a device key agrees one with the relay (X25519,

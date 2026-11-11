@@ -16,6 +16,9 @@ card:
 - **Your agent** remembers you across conversations, and can wake the Stick for reminders, briefings and
   watches.
 
+**Set up a Stick from your browser:** [zbruceli.github.io/kai](https://zbruceli.github.io/kai/) installs Kai,
+sets the Wi-Fi and pairs the Stick with your relay, over USB in desktop Chrome or Edge. No build tools needed.
+
 ## How it works: a fast path and a slow path
 
 ```
@@ -36,8 +39,9 @@ M5StickS3 ──TLS────▶ kai-relay ──▶ Gemini Live .............
 | Delivery | spoken now, plus a card | spoken the moment it's ready if the Stick is awake; otherwise a badge, read out on "any updates?" |
 
 - **The Stick stays thin.** It streams Opus audio (~24 kbit/s up, ~32 kbit/s down) over home Wi-Fi,
-  draws the face and cards, and deep-sleeps between uses. The link to the relay is encrypted and
-  mutually authenticated (TLS-PSK, one key per device).
+  draws the face and cards, and deep-sleeps between uses. It finds the relay on the home network by itself,
+  and the link is encrypted and mutually authenticated (TLS-PSK, one key per device, agreed by pairing
+  with a 6-digit code).
 - **The relay** (Python, on any always-on Linux box) bridges the Stick to Gemini Live. It also:
   - runs Kai's own tools: NOAA tides, Open-Meteo weather and marine, golden and blue hour, Google
     Places parking, trip notes;
@@ -136,21 +140,25 @@ uv sync --frozen && uv run kai-relay                  # prints wss://<server-ip>
 - **Logs:** `journalctl --user -u kai-relay -f` shows the transcript and tool calls.
 - **Update:** `git pull && uv sync --frozen && systemctl --user restart kai-relay`.
 - **Found on the LAN:** the relay announces itself (mDNS), so Sticks find it by themselves. Across subnets,
-  set its address from the flasher page (step 3, "Check or adjust").
+  set its address on the flasher page (*More settings*).
 
 **2. Slow path (optional):** Hermes in Docker. Follow [relay/deploy/hermes/README.md](relay/deploy/hermes/README.md):
 `docker compose up -d`, a few secrets, then `./configure.sh`. Without it, Kai simply has no `ask_agent`.
 
-**3. Stick:** open the **[flasher page](https://zbruceli.github.io/kai/)** in desktop Chrome or Edge.
-1. Plug the Stick in and press *Install* (choose *erase* for a new Stick).
-2. Enter your Wi-Fi when asked; it goes over USB to the Stick.
-3. The Stick finds the relay and shows a 6-digit code. On the relay, run `uv run kai-approve <code>`; if it
-   shows the same code, press the Stick's front button.
+**3. Stick:** open the **[flasher page](https://zbruceli.github.io/kai/)** in desktop Chrome or Edge, plug
+the Stick in and press *Connect to the Stick*.
+1. **Install:** a new Stick shows *Install Kai*. A Stick already running Kai shows *Update* (keeps its
+   Wi-Fi and pairing) and *Fresh install* (erases them).
+2. **Wi-Fi:** pick your network and type the password. It goes over USB to the Stick, which saves it only
+   once it has joined.
+3. **Pair:** the Stick finds the relay and shows a 6-digit code. On the relay, run
+   `uv run kai-approve <code>`; if it shows the same code, press the Stick's front button.
 
-The firmware holds no passwords or keys: Wi-Fi and the device key live on the Stick, and updating from the
-page (without erasing) keeps them. The key is agreed during pairing (X25519), never typed or sent; the link
-to the relay is encrypted and mutually authenticated (TLS-PSK). Manage Sticks with `uv run kai-devices` and
-`uv run kai-revoke <name>`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The page also shows the Stick's logs, and can set a relay address (for a relay on another subnet) or make
+the Stick forget its key. The published firmware is the same for every Stick and holds no passwords or keys:
+Wi-Fi and the device key live on the Stick. The key is agreed during pairing (X25519) and never typed or
+sent. Manage Sticks on the relay with `uv run kai-devices` and `uv run kai-revoke <name>`. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **From source:** `cd firmware && pio run -t upload`. A `src/secrets.h` (from `secrets.example.h`) is
 optional: it seeds Wi-Fi, a relay address or a key into the Stick's settings once. A build with it embeds
@@ -158,8 +166,8 @@ those secrets, so never share it. If the port isn't found, hold the side button 
 blinks (download mode).
 
 **Without a Stick:** `uv sync --extra sim && uv run kai-sim --host <server-ip>` talks to the relay through
-the Mac's mic and speakers. Give it its own key: `KAI_SIM_PSK=kai-sim:<hex>` in `.env`, with the same entry
-in the relay's `KAI_DEVICE_PSKS`.
+the Mac's mic and speakers. Give it its own key: `uv run kai-psk kai-sim` prints a `KAI_DEVICE_PSKS` entry;
+add it to the relay's `.env`, and put the same `kai-sim:<hex>` in the Mac's `.env` as `KAI_SIM_PSK`.
 
 **Tests:** `cd relay && uv run pytest` (offline). Add `-m network -s` to hit NOAA and Open-Meteo for real.
 `uv run python evals/routing.py` checks which path Gemini Live picks for a set of requests (real Gemini, ~1 min per 30 cases).
@@ -167,11 +175,15 @@ in the relay's `KAI_DEVICE_PSKS`.
 ## Repo map
 
 ```
-firmware/src/   main.cpp (modes, buttons, Wi-Fi, sleep) · audio.* (mic, speaker) · voice_codec.* (Opus) · face.* (sprite, cards)
-firmware/scripts/patch_websockets.py   adds TLS-PSK to the WebSockets library at build time
+firmware/src/   main.cpp (modes, buttons, Wi-Fi, sleep, relay discovery) · audio.* (mic, speaker) · voice_codec.* (Opus)
+                face.* (sprite, cards) · settings.* (NVS) · provision.* (setup over USB) · pairing* (pairing with a code)
+firmware/scripts/   patch_websockets.py (TLS-PSK for the WebSockets library) · package_release.py (the published build)
+docs/flash/     the flasher page (GitHub Pages): install, update, Wi-Fi, logs
 relay/kai_relay/
-  server.py     listeners (wss:// with TLS-PSK) and device auth
-  tls.py        the encrypted link; `kai-psk` makes device keys
+  server.py     listeners (wss:// with TLS-PSK, pairing) and device auth
+  tls.py        the encrypted link; `kai-psk` makes a key by hand
+  pairing.py    pairing with a code, the device list; kai-approve, kai-devices, kai-revoke, kai-pair
+  discovery.py  announces the relay on the LAN (mDNS `_kai._tcp`)
   session.py    Stick <-> Gemini Live bridge; wire protocol at the top
   tools/        fast-path tools, one file each (@tool decorator)
   backstop.py   runs the tool itself when Gemini answers without one, so a card always appears
@@ -194,9 +206,15 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (protocol, tools, security)
 - [x] Slow path, phase 2: memory across conversations (transcripts to Hermes, a profile brief Kai starts with, `recall`)
 - [x] Slow path, phase 3: reminders, briefings and watches that wake the Stick on a timer
 - [x] Encrypted Stick link (TLS-PSK), security audit and hardening, routing eval
+- [x] Setup without build tools: web flasher page, relay discovery, pairing with a code
 - [ ] Approvals: a spoken read-back plus a long press before anything with side effects
 - [ ] Remote access: phone as a BLE bridge (GPS for "near me"), or a relay reachable away from home
 - [ ] IMU gestures (lift to wake, shake to hush), OTA updates
+
+## Get started
+
+[**Open the flasher page**](https://zbruceli.github.io/kai/) to install Kai on an M5StickS3, set its Wi-Fi and
+pair it with your relay (start the relay first: [Setup](#setup)).
 
 ## License
 
