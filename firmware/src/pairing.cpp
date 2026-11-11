@@ -65,6 +65,7 @@ void onText(const uint8_t* payload, size_t length) {
     out["nonce"] = nonceHex;
     send(out);
     state = State::AwaitNonce;
+    log_i("pairing: commitment received, nonce sent");
   } else if (state == State::AwaitNonce && !strcmp(type, "pair_nonce")) {
     uint8_t relayNonce[16];
     if (!fromHex(msg["nonce"] | "", relayNonce, 16)) return fail("bad nonce");
@@ -76,6 +77,7 @@ void onText(const uint8_t* payload, size_t length) {
     crypto_wipe(priv, sizeof(priv));
     state = State::ShowCode;
     codeShownAt = millis();
+    log_i("pairing: code ready");
     ws.disconnect();  // the exchange is over; the code is what matters now
   } else {
     fail("unexpected message");
@@ -95,6 +97,7 @@ void onEvent(WStype_t type, uint8_t* payload, size_t length) {
       hello["pub"] = pubHex;
       send(hello);
       state = State::AwaitCommit;
+      log_i("pairing: connected, hello sent");
       break;
     }
     case WStype_TEXT:
@@ -141,6 +144,19 @@ bool active() { return state != State::Idle && state != State::Failed; }
 bool showingCode() { return state == State::ShowCode; }
 const char* code() { return codeStr; }
 bool failed() { return state == State::Failed; }
+
+const char* status() {
+  static String s;
+  switch (state) {
+    case State::Idle: return "idle";
+    case State::Connecting: return "connecting";
+    case State::AwaitCommit: return "awaiting commitment";
+    case State::AwaitNonce: return "awaiting nonce";
+    case State::ShowCode: return "showing code";
+    case State::Failed: s = String("failed: ") + lastError; return s.c_str();
+  }
+  return "?";
+}
 const char* error() { return lastError.c_str(); }
 
 bool confirm() {

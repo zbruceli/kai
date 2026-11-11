@@ -1,7 +1,7 @@
 """Pairing a new Stick with a code (kai_relay/pairing.py)."""
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -146,7 +146,8 @@ def test_limits_expiry_window_and_env_import(tmp_path):
     results = asyncio.run(pair_n(pairing.MAX_PENDING + 1, 0))
     assert all(results[:pairing.MAX_PENDING]) and results[-1] is None
     # Requests expire.
-    store.db.execute("UPDATE pending SET expires_at = ?", ((datetime.now() - timedelta(seconds=1)).isoformat(),))
+    store.db.execute("UPDATE pending SET expires_at = ?",
+                     ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),))
     store.db.commit()
     assert store.pending() == [] and store.approve(results[0]) is None
     # A pairing window approves the next Stick without typing its code, once.
@@ -203,3 +204,23 @@ def test_revoked_device_connection_is_closed():
         session._ACTIVE.pop("kai-gone", None)
         session._ACTIVE.pop("kai-kept", None)
     assert closed == [(4003, "revoked")]
+
+
+def test_commands_in_another_time_zone_see_the_same_requests(tmp_path, monkeypatch):
+    """The relay runs in local time (TZ=America/Los_Angeles); kai-approve over SSH may run in UTC. A request
+    stored by one must not look expired (or be deleted) to the other."""
+    import time as time_mod
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time_mod.tzset()
+    try:
+        store = store_at(tmp_path)
+        store.add_pending("kai-tz", bytes(range(32)), "123456", "127.0.0.1")
+        monkeypatch.setenv("TZ", "UTC")
+        time_mod.tzset()
+        other = store_at(tmp_path)  # a second process, eight hours "later" by its wall clock
+        assert [p["identity"] for p in other.pending()] == ["kai-tz"]
+        assert other.approve("123456") == "kai-tz"
+    finally:
+        monkeypatch.delenv("TZ")
+        time_mod.tzset()

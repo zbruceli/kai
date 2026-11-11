@@ -16,6 +16,7 @@ bool showingCode();                              // a code is on screen, waiting
 const char* code();                              // "215831"
 bool failed();                                   // the last attempt failed (try again later)
 const char* error();
+const char* status();  // for `kai-config get`: idle, exchanging, showing code, failed: <why>
 
 bool confirm();  // the owner pressed the front button: save the key (true) and finish
 void cancel();   // the side button, or the code expired

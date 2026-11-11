@@ -27,7 +27,7 @@ import logging
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes
@@ -72,8 +72,18 @@ def derive(own: X25519PrivateKey, their_pub: bytes, identity: str, stick_pub: by
 
 # ---- device keys ----
 
+# Times are stored in UTC: the relay and the commands (kai-approve over SSH) may run in different time zones.
+def _utc() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
 def _now() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
+    return _utc().isoformat()
+
+
+def _when(stored: str) -> datetime:
+    t = datetime.fromisoformat(stored)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
 class DeviceStore:
@@ -105,6 +115,9 @@ class DeviceStore:
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        with self.db:  # rows from before times were stored in UTC (no offset): too ambiguous to keep
+            self.db.execute("DELETE FROM pending WHERE expires_at NOT LIKE '%+00:00'")
+            self.db.execute("DELETE FROM kv WHERE key = 'pair_window_until' AND value NOT LIKE '%+00:00'")
 
     # The TLS handshake: an approved device's key, or None.
     def get(self, identity: str | None) -> bytes | None:
@@ -129,8 +142,11 @@ class DeviceStore:
                 log.info("imported device key for %s from KAI_DEVICE_PSKS", identity)
 
     def _expire(self) -> None:
-        with self.db:
-            self.db.execute("DELETE FROM pending WHERE expires_at < ?", (_now(),))
+        now = _utc()
+        expired = [r["id"] for r in self.db.execute("SELECT id, expires_at FROM pending") if _when(r["expires_at"]) < now]
+        if expired:
+            with self.db:
+                self.db.executemany("DELETE FROM pending WHERE id = ?", [(i,) for i in expired])
 
     def pending(self) -> list[dict]:
         self._expire()
@@ -139,12 +155,12 @@ class DeviceStore:
     def add_pending(self, identity: str, key: bytes, code: str, peer: str) -> bool:
         """Store a finished exchange. Returns True if a pairing window approved it straight away."""
         self._expire()
-        expires = datetime.now() + timedelta(seconds=PENDING_S)
+        expires = _utc() + timedelta(seconds=PENDING_S)
         with self.db:
             self.db.execute("DELETE FROM pending WHERE identity = ?", (identity,))  # newest request wins
             self.db.execute("INSERT INTO pending (identity, key_hex, code, peer, created_at, expires_at) "
                             "VALUES (?, ?, ?, ?, ?, ?)",
-                            (identity, key.hex(), code, peer, _now(), expires.replace(microsecond=0).isoformat()))
+                            (identity, key.hex(), code, peer, _now(), expires.isoformat()))
         if self._window_open():
             with self.db:
                 self.db.execute("DELETE FROM kv WHERE key = 'pair_window_until'")  # first device only
@@ -176,14 +192,14 @@ class DeviceStore:
                                                  "FROM devices ORDER BY identity")]
 
     def open_window(self, minutes: float) -> datetime:
-        until = datetime.now() + timedelta(minutes=minutes)
+        until = _utc() + timedelta(minutes=minutes)
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO kv VALUES ('pair_window_until', ?)", (until.isoformat(),))
         return until
 
     def _window_open(self) -> bool:
         row = self.db.execute("SELECT value FROM kv WHERE key = 'pair_window_until'").fetchone()
-        return bool(row) and datetime.fromisoformat(row["value"]) > datetime.now()
+        return bool(row) and _when(row["value"]) > _utc()
 
 
 # ---- the pairing endpoint (plain WebSocket: nothing secret crosses it) ----
@@ -260,7 +276,7 @@ def devices_main() -> None:
     for d in store.devices():
         print(f"{d['identity']:12} {d['status']:8} ({d['source']}, since {d['created_at']})")
     for p in store.pending():
-        left = (datetime.fromisoformat(p["expires_at"]) - datetime.now()).total_seconds() / 60
+        left = (_when(p["expires_at"]) - _utc()).total_seconds() / 60
         print(f"{p['identity']:12} waiting  code {p['code'][:3]} {p['code'][3:]} from {p['peer']}, "
               f"{max(left, 0):.0f} min left -> kai-approve {p['code']}")
     if not store.devices() and not store.pending():
@@ -296,4 +312,5 @@ def pair_main() -> None:
     p.add_argument("--open", type=float, metavar="MINUTES", nargs="?", const=2.0, required=True)
     minutes = min(max(p.parse_args().open, 0.5), 10.0)
     until = _store().open_window(minutes)
-    print(f"Pairing window open until {until:%H:%M:%S}: the next Stick to pair is approved automatically.")
+    print(f"Pairing window open until {until.astimezone():%H:%M:%S}: the next Stick to pair is approved "
+          "automatically.")

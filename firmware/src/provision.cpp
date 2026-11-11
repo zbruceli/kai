@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "pairing.h"
 #include "provision_util.h"
 #include "settings.h"
 
@@ -190,6 +191,7 @@ void handleConfig(const String& json) {
   out["relay"] = c.relayHost.length() ? c.relayHost + ":" + c.relayPort : String("");  // set by hand
   out["found"] = c.foundHost.length() ? c.foundHost + ":" + c.foundPort : String("");  // on the network
   out["key"] = settings::hasKey() ? c.keyId : String("");  // the identity only, never the key
+  out["pairing"] = pairing::status();
   reply(out);
   if (relayChanged && hooks.relayChanged) hooks.relayChanged();
 }
