@@ -15,7 +15,8 @@
 
 #include "audio.h"
 #include "face.h"
-#include "secrets.h"
+#include "provision.h"
+#include "settings.h"
 #include "voice_codec.h"
 #include "wake_alarm.h"
 
@@ -23,7 +24,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.12.1";
+static constexpr const char* FW_VERSION = "0.13.0";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -43,6 +44,10 @@ static constexpr uint32_t TIMER_WAKE_CONNECT_MS = 25000;   // give Wi-Fi and the
 // After this many timer wakes in a row with no button press, only a button wakes it: a misbehaving (or
 // impersonated) relay can't keep waking it to drain the battery.
 static constexpr uint8_t MAX_UNTOUCHED_TIMER_WAKES = 12;
+static constexpr uint16_t RELAY_PLAIN_PORT = 8765;          // only for a relay without device keys
+// Factory reset: hold the side button this long, then confirm with the front button.
+static constexpr uint32_t RESET_HOLD_MS = 10000;
+static constexpr uint32_t RESET_CONFIRM_MS = 15000;
 // Nothing Kai says runs this long. A reply that does, with no button press, is dropped and the relay is
 // ignored for a minute, so a stream of captions can't keep the Stick awake.
 static constexpr uint32_t MAX_REPLY_MS = 3 * 60 * 1000;
@@ -92,6 +97,10 @@ static bool wokeFromSleep = false;
 static bool wokeByTimer = false;   // this boot came from the RTC timer, not a button
 static bool touched = false;       // a button was pressed since boot
 static uint32_t wsBeganAt = 0;
+static uint32_t relayLastTry = 0;  // 0: try now
+static bool resetArmed = false;    // asked "erase settings?", waiting for the front button
+static uint32_t resetArmedAt = 0;
+static bool resetHoldDone = false;
 static bool usedRelayCache = false;
 static bool connectedSinceBegin = false;
 static uint32_t wifiBeganAt = 0;
@@ -451,7 +460,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       connectedSinceBegin = true;
       JsonDocument hello;
       hello["type"] = "hello";
-      hello["device"] = String("kai-") + WiFi.macAddress().substring(12);
+      hello["device"] = settings::deviceName();
       hello["fw"] = FW_VERSION;
       hello["battery"] = M5.Power.getBatteryLevel();
       if (firstConnect) hello["wake"] = wokeByTimer ? "timer" : (wokeFromSleep ? "button" : "boot");
@@ -508,17 +517,42 @@ static void startWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   wifiBeganAt = millis();
+  const auto& c = settings::get();
+  if (!settings::hasWifi()) return;  // set up over USB first (provision.h)
   if (cachedChannel > 0) {
-    WiFi.begin(WIFI_SSID, WIFI_PASS, cachedChannel, cachedBssid);  // skips the channel scan
+    WiFi.begin(c.ssid.c_str(), c.pass.c_str(), cachedChannel, cachedBssid);  // skips the channel scan
     usedWifiCache = true;
   } else {
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(c.ssid.c_str(), c.pass.c_str());
   }
 }
 
+// Setup over USB changed the Wi-Fi or the relay settings.
+static void onWifiChanged() {
+  cachedChannel = 0;
+  usedWifiCache = false;
+  wifiCached = false;
+}
+
+static void onRelayChanged() {
+  if (wsStarted) ws.disconnect();
+  wsStarted = false;
+  cachedRelayIp = 0;
+  relayLastTry = 0;
+}
+
 static void startRelayConnection() {
-  String host = RELAY_HOST;
+  const auto& c = settings::get();
+  String host = c.relayHost;
   usedRelayCache = false;
+  if (host.isEmpty()) {
+    if (!earlyTalk) face::setStatusText("no relay address set");
+    return;  // set it over USB (`kai-config {"relay": ...}`); retried from loop()
+  }
+  if (!settings::hasKey() && c.token.isEmpty()) {
+    if (!earlyTalk) face::setStatusText("no device key set");
+    return;
+  }
   if (host.endsWith(".local")) {
     if (cachedRelayIp) {
       host = IPAddress(cachedRelayIp).toString();
@@ -537,15 +571,15 @@ static void startRelayConnection() {
       host = ip.toString();
     }
   }
-#ifdef KAI_PSK_HEX
-  // Encrypted and mutually authenticated (TLS 1.2 ECDHE-PSK): an impostor on the Wi-Fi can't complete the
-  // handshake, so the token and the owner's speech never reach it. ~0.2 s at 240 MHz.
-  ws.beginSslWithPsk(host.c_str(), RELAY_TLS_PORT, "/ws", KAI_PSK_IDENTITY, KAI_PSK_HEX);
-#else
-#warning "No KAI_PSK_HEX in secrets.h: the link to the relay is unencrypted"
-  ws.begin(host, RELAY_PORT, "/ws");
-#endif
-  ws.setExtraHeaders("Authorization: Bearer " KAI_DEVICE_TOKEN);
+  if (settings::hasKey()) {
+    // Encrypted and mutually authenticated (TLS 1.2 ECDHE-PSK): an impostor on the Wi-Fi can't complete
+    // the handshake, so the owner's speech never reaches it. The key itself identifies this Stick to the
+    // relay, so no token is needed. ~0.2 s at 240 MHz.
+    ws.beginSslWithPsk(host.c_str(), c.relayPort, "/ws", c.keyId.c_str(), c.keyHex.c_str());
+  } else {
+    ws.begin(host, RELAY_PLAIN_PORT, "/ws");  // an old relay without device keys: unencrypted
+  }
+  if (c.token.length()) ws.setExtraHeaders((String("Authorization: Bearer ") + c.token).c_str());
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(wokeFromSleep ? 1000 : 3000);
   ws.enableHeartbeat(30000, 5000, 2);  // the relay pings every 20 s too; no need to wake the radio more
@@ -561,15 +595,20 @@ static void startRelayConnection() {
 }
 
 static void maintainConnection() {
-  static uint32_t lastTry = 0;
   const uint32_t now = millis();
+  if (provision::busy()) return;  // Improv is trying a new Wi-Fi network
+  if (!settings::hasWifi()) {
+    if (mode != Mode::Offline) setMode(Mode::Offline);
+    face::setStatusText(String("set me up: ") + settings::deviceName());
+    return;
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     if (usedWifiCache && now - wifiBeganAt > 5000) {  // access point moved: fall back to a full scan
       usedWifiCache = false;
       cachedChannel = 0;
       WiFi.disconnect();
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      WiFi.begin(settings::get().ssid.c_str(), settings::get().pass.c_str());
     }
     if (!earlyTalk) {
       if (mode == Mode::Listening) audio::stopMic(discardMic);
@@ -593,10 +632,10 @@ static void maintainConnection() {
     ws.disconnect();
     wsStarted = false;
     cachedRelayIp = 0;
-    lastTry = 0;
+    relayLastTry = 0;
   }
-  if (!wsStarted && (lastTry == 0 || now - lastTry > 5000)) {
-    lastTry = now;
+  if (!wsStarted && (relayLastTry == 0 || now - relayLastTry > 5000)) {
+    relayLastTry = now;
     startRelayConnection();
   }
 }
@@ -606,16 +645,49 @@ static void maintainConnection() {
 static void showStatus() {
   Card c;
   c.title = "Kai status";
+  c.lines[c.count++] = settings::deviceName() + "  " + settings::get().relayHost;
   c.lines[c.count++] = String("WiFi ") + WiFi.localIP().toString() + " " + String(WiFi.RSSI()) + "dB";
   c.lines[c.count++] = String("Relay ") + (wsConnected ? "connected" : "offline");
   c.lines[c.count++] = String("Battery ") + String(M5.Power.getBatteryLevel()) + "%" +
-                       (audio::onUsbPower() ? " on USB" : "");
-  c.lines[c.count++] = String("Firmware ") + FW_VERSION;
+                       (audio::onUsbPower() ? " on USB" : "") + "  fw " + FW_VERSION;
   face::clearReply();
   showCard(c);
 }
 
+// Hold the side button 10 s -> "Erase settings?"; the front button confirms, the side button cancels.
+// Erases Wi-Fi, relay and device key (nothing else on the Stick holds data) and restarts in setup mode.
+static bool handleFactoryReset() {
+  if (M5.BtnB.wasReleased()) resetHoldDone = false;
+  if (!resetArmed && !resetHoldDone && M5.BtnB.pressedFor(RESET_HOLD_MS)) {
+    resetHoldDone = true;
+    resetArmed = true;
+    resetArmedAt = millis();
+    Card c;
+    c.title = "Factory reset?";
+    c.lines[c.count++] = "Erases Wi-Fi, relay";
+    c.lines[c.count++] = "and device key.";
+    c.lines[c.count++] = "Front button: erase";
+    c.lines[c.count++] = "Side button: cancel";
+    face::clearReply();
+    showCard(c);
+    return true;
+  }
+  if (!resetArmed) return false;
+  if (M5.BtnA.wasPressed()) {
+    face::setStatusText("erasing...");
+    settings::factoryReset();
+    delay(300);
+    ESP.restart();
+  }
+  if (M5.BtnB.wasClicked() || millis() - resetArmedAt > RESET_CONFIRM_MS) {
+    resetArmed = false;
+    setMode(Mode::Idle);
+  }
+  return true;  // while asking, the buttons mean only yes or no
+}
+
 static void handleButtons() {
+  if (handleFactoryReset()) return;
   // With the screen off, the side button only wakes Kai (so it doesn't also scroll or open status).
   if (screenOff && M5.BtnB.wasPressed()) {
     wake();
@@ -683,6 +755,8 @@ void setup() {
     if (untouchedTimerWakes < 255) untouchedTimerWakes++;
   }
 
+  settings::begin();
+  provision::begin(FW_VERSION, {onWifiChanged, onRelayChanged});
   startWifi();
   face::begin();
   backlight(BRIGHTNESS_AWAKE);
@@ -695,13 +769,16 @@ void setup() {
   if (wokeToTalk && M5.BtnA.isPressed()) {
     startEarlyTalk();
   } else {
-    face::setStatusText(wokeFromSleep ? "waking up..." : "connecting wifi...");
+    face::setStatusText(!settings::hasWifi() ? String("set me up: ") + settings::deviceName()
+                        : wokeFromSleep       ? String("waking up...")
+                                              : String("connecting wifi..."));
     setMode(Mode::Offline);
   }
 }
 
 void loop() {
   M5.update();
+  provision::poll();  // setup over USB: Improv Wi-Fi and kai-config lines
   maintainConnection();
   if (wsStarted) ws.loop();
   if (connectBoost && (wsConnected || millis() - wsBeganAt > CONNECT_BOOST_MS)) {

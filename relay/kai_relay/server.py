@@ -32,6 +32,15 @@ def _lan_ip() -> str:
             return "127.0.0.1"
 
 
+def device_authorized(ws, expected_auth: str) -> bool:
+    """Over the encrypted link the TLS-PSK handshake has already proved the device's own key, which is
+    what identifies it, so no shared token is needed (Sticks set up without secrets.h don't have one).
+    The token still guards the plain ws:// fallback for relays without device keys."""
+    if ws.transport.get_extra_info("ssl_object") is not None:
+        return True
+    return hmac.compare_digest(ws.request.headers.get("Authorization", ""), expected_auth)
+
+
 async def run() -> None:
     settings = load_settings()
     client = genai.Client(api_key=settings.gemini_api_key)
@@ -64,7 +73,7 @@ async def run() -> None:
             if ws.request.path != "/ws":
                 await ws.close(1008, "unknown path")
                 return
-            if not hmac.compare_digest(ws.request.headers.get("Authorization", ""), expected_auth):
+            if not device_authorized(ws, expected_auth):
                 log.warning("rejected device from %s: bad token", ws.remote_address)
                 await ws.close(1008, "unauthorized")
                 return

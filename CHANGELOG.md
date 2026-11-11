@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+**One firmware for every Stick** (provisioning phase 1 of 4):
+- **Settings live on the Stick, not in the binary.** Wi-Fi, the relay address and the device key are stored
+  in NVS, which survives reflashing. A build with no `secrets.h` contains no secrets (checked against the
+  binary), so it can be published. A developer build with a `secrets.h` copies it into NVS once.
+- **Setup over USB:**
+  - Improv Wi-Fi, which the web flasher page (phase 4) uses: device info, state, a list of nearby networks,
+    and Wi-Fi settings. A new network is saved only once the Stick has joined it.
+  - `kai-config {json}` lines for the relay address, the device key (`kai-xxxx:<hex>`, as `kai-psk`
+    prints it), status and factory reset. Secrets are never sent back.
+- **On the Stick:** "set me up: kai-xxxx" without Wi-Fi; a missing relay address or key is shown; hold the
+  side button for 10 s for a factory reset, confirmed with the front button. The status card shows the
+  device name and relay.
+- **Relay:** a Stick on the encrypted link no longer needs the shared device token, because its key
+  identifies it. Plain `ws://` still requires the token.
+- **Tested:**
+  - firmware tests on the Mac: address and key validation, and an Improv frame that the Improv library's
+    own parser reads back;
+  - a relay test with real TLS and plain connections;
+  - on the Stick: settings carried over from `secrets.h`; Improv state, info and network scan over USB;
+    bad addresses and keys refused; a wrong Wi-Fi network reported as "unable to connect", with the Stick
+    staying on its working network.
+
 **Timer wakes reconcile with the relay** (from a design review of the reminder flow):
 - **A reminder cancelled after it fired but before it was spoken is no longer announced.** It used to
   wait in the inbox regardless. Each update now records which reminder it came from: cancelling withdraws

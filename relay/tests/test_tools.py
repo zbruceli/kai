@@ -254,3 +254,37 @@ def test_psk_parsing():
     for bad in (f"kai:{'ab' * 16}", "kai:nothex", f"bad name:{key}", f":{key}"):
         with pytest.raises(ValueError):
             tls.parse_psks(bad)
+
+
+def test_token_only_needed_without_tls():
+    """A Stick on the encrypted link is identified by its key: no shared token. Plain ws:// still needs it."""
+    from websockets.asyncio.client import connect
+    from websockets.asyncio.server import serve
+
+    from kai_relay import tls
+    from kai_relay.server import device_authorized
+
+    key = bytes(range(32))
+    results = {}
+
+    def handler_for(name):
+        async def handler(ws):
+            results[name] = device_authorized(ws, "Bearer right-token")
+            await ws.close()
+        return handler
+
+    async def go():
+        async with serve(handler_for("tls, no token"), "127.0.0.1", 0, ssl=tls.server_context({"kai-t": key})) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with connect(f"wss://127.0.0.1:{port}/ws", ssl=tls.client_context("kai-t", key)) as ws:
+                await ws.wait_closed()
+        for name, header in (("plain, no token", {}), ("plain, wrong token", {"Authorization": "Bearer nope"}),
+                             ("plain, right token", {"Authorization": "Bearer right-token"})):
+            async with serve(handler_for(name), "127.0.0.1", 0) as s:
+                port = s.sockets[0].getsockname()[1]
+                async with connect(f"ws://127.0.0.1:{port}/ws", additional_headers=header) as ws:
+                    await ws.wait_closed()
+
+    asyncio.run(go())
+    assert results == {"tls, no token": True, "plain, no token": False, "plain, wrong token": False,
+                       "plain, right token": True}

@@ -1,3 +1,6 @@
+// Optional, for developers. The firmware keeps its settings in NVS and is normally set up over USB (Wi-Fi
+// through the web flasher page, the rest with `kai-config` lines; see src/provision.h). A build that has
+// a secrets.h copies these values into NVS once, on its first boot, so a Stick can also be set up this way.
 // Copy to secrets.h (git-ignored) and fill in.
 #pragma once
 
