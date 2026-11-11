@@ -3,11 +3,14 @@
 ## Unreleased
 
 **Set up a Stick from the browser** (provisioning phase 4 of 4):
-- **[Flasher page](https://zbruceli.github.io/kai/)** (`docs/flash/`, on GitHub Pages): flash, then Wi-Fi
-  over Improv, with ESP Web Tools 10.4.0, in desktop Chrome or Edge. It then explains pairing, and can
-  check a plugged-in Stick (device, Wi-Fi, relay, pairing state), set or clear a relay address, or forget
-  the key. It has no server: everything goes over USB.
-- **Updates keep settings.** The page writes the bootloader, partition table and app separately and skips
+- **[Flasher page](https://zbruceli.github.io/kai/)** (`docs/flash/`, on GitHub Pages), in desktop Chrome or
+  Edge. Connect once, and it shows the Stick (name, firmware, Wi-Fi, relay, pairing), then a menu in order
+  of use: **Update** (keeps Wi-Fi and pairing), **Fresh install** (erases), **Wi-Fi** (pick a network
+  from a scan; saved only once joined), **Logs & console**. A blank Stick gets just *Install*. More
+  settings: relay address, forget the key. Flashing uses esptool-js 0.6.1, Wi-Fi the Improv protocol
+  (`improv.js`, tested with `node docs/flash/improv.test.mjs`). It has no server: everything goes over
+  USB.
+- **Updates keep settings.** *Update* writes the bootloader, partition table and app separately and skips
   the settings area, so updating without erasing keeps Wi-Fi and the key. (One merged image, padded over
   that area, would have wiped them.)
 - **Released firmware:** `.github/workflows/firmware.yml` builds the generic firmware on each `v*` tag

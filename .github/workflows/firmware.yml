@@ -35,7 +35,7 @@ jobs:
       - name: Build and package
         run: python3 firmware/scripts/package_release.py --out site/firmware
       - name: Assemble the page
-        run: cp -R docs/flash/. site/ && cp docs/images/kai-moods.gif site/
+        run: cp -R docs/flash/. site/ && rm site/*.test.mjs && cp docs/images/kai-moods.gif site/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: firmware

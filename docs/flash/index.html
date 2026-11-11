@@ -4,19 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Set up Kai</title>
-<meta name="description" content="Flash Kai onto an M5StickS3 from the browser, give it Wi-Fi, and pair it with your relay.">
-<!-- ESP Web Tools (Apache-2.0): flashing and Improv Wi-Fi over Web Serial. Pinned to an exact version. -->
-<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<meta name="description" content="Install Kai on an M5StickS3 from the browser, give it Wi-Fi, and pair it with your relay.">
 <style>
   :root {
     --bg: #fff3e3; --card: #fffaf3; --ink: #4b3a63; --soft: #7d6f95; --line: #eadcc9;
-    --lilac: #cdb9ff; --violet: #9d86e9; --pink: #ff9fb8; --sun: #ffc94d; --ok: #4f9d74; --bad: #c44b6c;
-    --code: #f4e8d8;
+    --lilac: #cdb9ff; --violet: #8a70e0; --pink: #ff9fb8; --sun: #ffc94d; --ok: #3f8a63; --bad: #c0405f;
+    --code: #f4e8d8; --hover: #f7ecdd;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #16111f; --card: #1e1729; --ink: #efe6ff; --soft: #a99bc4; --line: #2e2540;
-      --lilac: #cdb9ff; --violet: #9d86e9; --ok: #7fd1a5; --bad: #ff8fab; --code: #2a2138;
+      --violet: #9d86e9; --ok: #7fd1a5; --bad: #ff8fab; --code: #2a2138; --hover: #261d33;
     }
   }
   * { box-sizing: border-box; }
@@ -26,42 +24,70 @@
   }
   main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
   header { display: flex; gap: 20px; align-items: center; margin-bottom: 28px; }
-  header img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 20px; background: #16111f; }
+  header img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 20px; background: #16111f; flex: none; }
   h1 { margin: 0; font-size: 2rem; letter-spacing: -0.01em; }
   header p { margin: 4px 0 0; color: var(--soft); }
-  h2 { font-size: 1.15rem; margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
+  h2 { font-size: 1.15rem; margin: 0 0 8px; display: flex; gap: 10px; align-items: center; }
   h2 .n {
     flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--lilac); color: #2a1f3d;
     display: inline-grid; place-items: center; font-size: 0.95rem;
   }
+  h3 { font-size: 1rem; margin: 18px 0 4px; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin: 16px 0; }
   p { margin: 8px 0; }
   ul { margin: 8px 0; padding-left: 22px; }
   li { margin: 4px 0; }
   .soft { color: var(--soft); font-size: 0.93rem; }
-  code, kbd {
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  code {
     font: 0.9em ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 6px; border-radius: 6px;
   }
   pre { background: var(--code); padding: 10px 14px; border-radius: 10px; overflow-x: auto; margin: 8px 0; }
   pre code { padding: 0; background: none; }
   a { color: var(--violet); }
-  button, .btn {
+  button {
     font: inherit; font-weight: 600; border: 0; border-radius: 999px; padding: 10px 20px; cursor: pointer;
     background: var(--violet); color: #fff;
   }
-  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; padding: 8px 16px; }
   button:disabled { opacity: 0.5; cursor: default; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
-  input[type=text] {
+  input[type=text], input[type=password], select {
     font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
     padding: 9px 12px; min-width: 0; flex: 1 1 220px;
   }
-  .warn { border-left: 4px solid var(--sun); padding: 6px 12px; background: var(--code); border-radius: 8px; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0 0; }
+  .warn { border-left: 4px solid var(--sun); padding: 8px 12px; background: var(--code); border-radius: 8px; }
+  .note { margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--code); }
+
+  /* The Stick: what it is, then what you can do with it. */
+  .device { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+  .device strong { font-size: 1.1rem; display: block; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin: 10px 0 0; }
   dt { color: var(--soft); }
   dd { margin: 0; overflow-wrap: anywhere; }
-  .ok { color: var(--ok); } .bad { color: var(--bad); }
-  #status-msg { min-height: 1.5em; }
+  .actions { margin: 16px 0 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .action {
+    display: flex; gap: 14px; align-items: center; width: 100%; text-align: left; border-radius: 0;
+    background: transparent; color: var(--ink); padding: 14px 16px; font-weight: 400;
+  }
+  .action + .action { border-top: 1px solid var(--line); }
+  .action:hover { background: var(--hover); }
+  .action svg { flex: none; width: 24px; height: 24px; color: var(--violet); }
+  .action .t { display: block; font-weight: 600; }
+  .action .d { display: block; color: var(--soft); font-size: 0.9rem; }
+  .action .go { margin-left: auto; color: var(--soft); flex: none; }
+  .action.primary .t { color: var(--violet); }
+  .action.primary { background: color-mix(in srgb, var(--lilac) 18%, transparent); }
+  .action.danger svg, .action.danger .t { color: var(--bad); }
+  .panel { margin: 16px 0 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; }
+  .bar { height: 10px; border-radius: 999px; background: var(--code); overflow: hidden; margin: 10px 0 4px; }
+  .bar > div { height: 100%; width: 0; background: var(--violet); transition: width 0.2s; }
+  #log {
+    height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0;
+    font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  details { margin: 16px 0 0; }
+  summary { cursor: pointer; color: var(--soft); }
   footer { color: var(--soft); font-size: 0.9rem; margin-top: 28px; }
   [hidden] { display: none !important; }
 </style>
@@ -72,7 +98,7 @@
     <img src="kai-moods.gif" alt="Kai's face cycling through its moods">
     <div>
       <h1>Set up Kai</h1>
-      <p>Flash a Stick, give it Wi-Fi and pair it with your relay. It all happens over USB, in this browser.</p>
+      <p>Install Kai on a Stick, give it Wi-Fi and pair it with your relay. It all happens over USB, in this browser.</p>
     </div>
   </header>
 
@@ -86,26 +112,119 @@
     </ul>
   </section>
 
-  <section>
-    <h2><span class="n">1</span>Flash and connect to Wi-Fi</h2>
-    <p>Plug the Stick in, then press <em>Install</em> and pick its port.</p>
-    <div class="row">
-      <esp-web-install-button manifest="firmware/manifest.json">
-        <button slot="activate">Install Kai<span id="fw-version"></span></button>
-        <span slot="unsupported" class="warn">This browser can't talk to USB devices. Open this page in desktop Chrome or Edge.</span>
-        <span slot="not-allowed" class="warn">Flashing only works over HTTPS. Open this page from its https:// address.</span>
-      </esp-web-install-button>
+  <section aria-labelledby="stick-h">
+    <h2 id="stick-h"><span class="n">1</span>Your Stick</h2>
+
+    <div id="v-disconnected">
+      <p>Plug the Stick in, then connect to it. You can then install or update Kai, set its Wi-Fi, or watch its logs.</p>
+      <div class="row">
+        <button id="connect">Connect to the Stick</button>
+        <span id="fw-latest" class="soft"></span>
+      </div>
+      <p id="no-firmware" class="warn" hidden>No firmware found next to this page. Open the published page,
+        <a href="https://zbruceli.github.io/kai/">zbruceli.github.io/kai</a>, rather than a copy of the file.</p>
+      <p id="unsupported" class="warn" hidden>This browser can't talk to USB devices. Open this page over HTTPS in
+        desktop Chrome or Edge.</p>
+      <ul class="soft">
+        <li>Pick <em>USB JTAG/serial debug unit</em> in the list.</li>
+        <li>No port in the list? Hold the side button for about 2 seconds, until the green light blinks
+          (download mode), and connect again.</li>
+        <li>Port busy? Close other tabs or apps using the Stick, like another copy of this page or a serial monitor.</li>
+      </ul>
     </div>
-    <p id="no-firmware" class="warn" hidden>No firmware found next to this page. Open the published page,
-      <a href="https://zbruceli.github.io/kai/">zbruceli.github.io/kai</a>, rather than a copy of the file.</p>
-    <ul class="soft">
-      <li><strong>New Stick:</strong> choose <em>erase</em> when asked. <strong>Updating:</strong> don't erase,
-        and the Stick keeps its Wi-Fi and pairing.</li>
-      <li>After flashing, enter your Wi-Fi network and password. They go over the cable to the Stick, which saves
-        them only once it has joined that network.</li>
-      <li>No port in the list? Hold the side button for about 2 seconds, until the green light blinks
-        (download mode), and try again.</li>
-    </ul>
+
+    <div id="v-connected" hidden>
+      <div class="device">
+        <div>
+          <strong id="d-name"></strong>
+          <span id="d-fw" class="soft"></span>
+        </div>
+        <button id="disconnect" class="quiet">Disconnect</button>
+      </div>
+      <dl id="status"></dl>
+
+      <div id="actions" class="actions" role="group" aria-label="What to do">
+        <button class="action" id="a-update" data-panel="progress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span><span class="t" id="a-update-title">Update</span><span class="d" id="a-update-desc"></span></span>
+          <span class="go" aria-hidden="true">›</span>
+        </button>
+        <button class="action danger" id="a-fresh" data-panel="progress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          <span><span class="t" id="a-fresh-title">Fresh install</span><span class="d" id="a-fresh-desc"></span></span>
+          <span class="go" aria-hidden="true">›</span>
+        </button>
+        <button class="action" id="a-wifi" data-panel="wifi">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5 12.6a10 10 0 0 1 14 0"/><path d="M8.5 16.4a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="0.8" fill="currentColor"/></svg>
+          <span><span class="t">Wi-Fi</span><span class="d" id="a-wifi-desc"></span></span>
+          <span class="go" aria-hidden="true">›</span>
+        </button>
+        <button class="action" id="a-logs" data-panel="logs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+          <span><span class="t">Logs &amp; console</span><span class="d">See what the Stick prints; restart it.</span></span>
+          <span class="go" aria-hidden="true">›</span>
+        </button>
+      </div>
+
+      <div id="p-progress" class="panel" hidden>
+        <strong id="progress-text">Working…</strong>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="progress-bar"></div></div>
+        <p class="soft">Keep the Stick plugged in and this tab open.</p>
+      </div>
+
+      <form id="p-wifi" class="panel" hidden>
+        <h3 style="margin-top:0">Wi-Fi</h3>
+        <p class="soft">The password goes over the cable to the Stick only. It saves the network once it has
+          joined it, so a typo can't cut off Wi-Fi that works.</p>
+        <div class="row">
+          <select id="wifi-ssid" aria-label="Network"></select>
+          <input id="wifi-other" type="text" placeholder="Network name" aria-label="Network name" hidden
+                 autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <input id="wifi-pass" type="password" placeholder="Password" aria-label="Password" autocomplete="off">
+        </div>
+        <div class="row">
+          <button id="wifi-save" type="submit">Connect</button>
+          <button id="wifi-cancel" type="button" class="quiet">Cancel</button>
+        </div>
+        <p id="wifi-msg" class="soft" role="status"></p>
+      </form>
+
+      <div id="p-logs" class="panel" hidden>
+        <div class="row" style="margin-top:0; justify-content:space-between">
+          <h3 style="margin:0">Logs</h3>
+          <span class="row" style="margin:0">
+            <label class="soft"><input id="follow" type="checkbox" checked> Follow</label>
+            <button id="restart" class="quiet" type="button">Restart the Stick</button>
+            <button id="logs-close" class="quiet" type="button">Close</button>
+          </span>
+        </div>
+        <pre id="log" aria-live="off"></pre>
+        <form id="console-form" class="row" style="margin-top:0">
+          <input id="console-input" type="text" placeholder='Send a line, e.g. kai-config {}' aria-label="Send a line to the Stick"
+                 autocomplete="off" spellcheck="false">
+          <button type="submit" class="quiet">Send</button>
+        </form>
+      </div>
+
+      <p id="note" class="note" role="status" hidden></p>
+
+      <details id="more">
+        <summary>More settings</summary>
+        <h3>Relay address</h3>
+        <p class="soft">Leave it empty to let the Stick find the relay on the network. Set one when discovery
+          doesn't reach the relay, like on another subnet.</p>
+        <div class="row">
+          <input id="relay" type="text" placeholder="found automatically" spellcheck="false" autocomplete="off"
+                 aria-label="Relay address (host or host:port)">
+          <button id="save-relay" class="quiet">Save</button>
+        </div>
+        <h3>Pair again</h3>
+        <p class="soft">Forget this Stick's key, for a new relay or after <code>kai-revoke</code>. It shows a new code.</p>
+        <div class="row"><button id="unpair" class="quiet">Forget the key</button></div>
+      </details>
+    </div>
   </section>
 
   <section>
@@ -121,173 +240,12 @@
     <p>That's it: hold the front button and talk.</p>
   </section>
 
-  <section>
-    <h2><span class="n">3</span>Check or adjust the Stick <span class="soft">(optional)</span></h2>
-    <p>Close the install window first: only one page can use the port at a time.</p>
-    <div class="row">
-      <button id="connect">Connect to the Stick</button>
-      <button id="disconnect" class="quiet" hidden>Disconnect</button>
-    </div>
-    <p id="status-msg" class="soft" role="status"></p>
-    <div id="panel" hidden>
-      <dl id="status"></dl>
-      <h3 style="font-size:1rem;margin:20px 0 4px">Relay address</h3>
-      <p class="soft">Leave it empty to let the Stick find the relay on the network. Set one when the relay
-        is somewhere discovery doesn't reach, like another subnet.</p>
-      <div class="row">
-        <input id="relay" type="text" placeholder="found automatically" spellcheck="false" autocomplete="off"
-               aria-label="Relay address (host or host:port)">
-        <button id="save-relay">Save</button>
-      </div>
-      <h3 style="font-size:1rem;margin:20px 0 4px">Pair again</h3>
-      <p class="soft">Forget this Stick's key, for a new relay or after <code>kai-revoke</code>. It shows a new code.</p>
-      <div class="row"><button id="unpair" class="quiet">Forget the key</button></div>
-    </div>
-  </section>
-
   <footer>
     This page has no server: it only talks to the Stick over USB. The firmware holds no passwords or keys;
-    those stay on your Stick. <a href="https://github.com/zbruceli/kai">Source on GitHub</a> (MIT).
+    those stay on your Stick. Flashing uses <a href="https://github.com/espressif/esptool-js">esptool-js</a>.
+    <a href="https://github.com/zbruceli/kai">Source on GitHub</a> (MIT).
   </footer>
 </main>
-
-<script>
-  // Show the firmware version from the manifest on the install button.
-  // The firmware sits next to the published page only (CI adds it): a copy opened from the repo has none.
-  fetch("firmware/manifest.json").then(r => {
-    if (!r.ok) throw new Error(r.status);
-    return r.json();
-  }).then(m => {
-    document.getElementById("fw-version").textContent = ` ${m.version}`;
-  }).catch(() => {
-    document.getElementById("no-firmware").hidden = false;
-  });
-
-  // The Stick's own setup lines over USB: send `kai-config {json}`, it answers `kai-config {json}`
-  // (firmware/src/provision.cpp). Secrets are never sent back.
-  const $ = id => document.getElementById(id);
-  const msg = (text, cls = "soft") => { $("status-msg").textContent = text; $("status-msg").className = cls; };
-  let port = null, reader = null, waiting = null;
-
-  if (!("serial" in navigator)) {
-    $("connect").disabled = true;
-    msg("This browser can't talk to USB devices: use desktop Chrome or Edge.");
-  }
-
-  async function readLoop() {
-    const decoder = new TextDecoder();
-    let buf = "";
-    try {
-      while (port && port.readable) {
-        reader = port.readable.getReader();
-        try {
-          for (;;) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            let nl;
-            while ((nl = buf.search(/[\r\n]/)) >= 0) {
-              const line = buf.slice(0, nl);
-              buf = buf.slice(nl + 1);
-              const at = line.indexOf("kai-config {");
-              if (at >= 0 && waiting) {
-                try { const reply = JSON.parse(line.slice(at + 11)); waiting(reply); waiting = null; } catch {}
-              }
-            }
-            if (buf.length > 4096) buf = "";
-          }
-        } finally {
-          reader.releaseLock();
-          reader = null;
-        }
-      }
-    } catch (e) {
-      msg(`Lost the connection: ${e.message}`, "bad");
-      teardown();
-    }
-  }
-
-  async function request(obj) {
-    // The Stick may be busy or booting: ask a few times.
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const reply = new Promise(resolve => { waiting = resolve; setTimeout(() => resolve(null), 2000); });
-      const writer = port.writable.getWriter();
-      try { await writer.write(new TextEncoder().encode(`\nkai-config ${JSON.stringify(obj)}\n`)); }
-      finally { writer.releaseLock(); }
-      const r = await reply;
-      if (r) return r;
-    }
-    throw new Error("the Stick didn't answer (is it running Kai, and is the install window closed?)");
-  }
-
-  function show(s) {
-    const rows = [
-      ["Device", s.device],
-      ["Firmware", s.fw],
-      ["Wi-Fi", s.wifi ? `${s.wifi} (${s.wifi_connected ? "connected" : "not connected"})` : "not set"],
-      ["Relay", s.relay ? `${s.relay} (set by hand)` : s.found ? `${s.found} (found on the network)` : "not found yet"],
-      ["Paired", s.key ? `yes, as ${s.key}` : "no"],
-      ["Pairing", s.pairing],
-    ];
-    const dl = $("status");
-    dl.replaceChildren();
-    for (const [k, v] of rows) {
-      const dt = document.createElement("dt"); dt.textContent = k;
-      const dd = document.createElement("dd"); dd.textContent = v ?? "";
-      dl.append(dt, dd);
-    }
-    $("relay").value = s.relay || "";
-    $("panel").hidden = false;
-  }
-
-  async function run(obj, done) {
-    try {
-      const r = await request(obj);
-      show(r);
-      if (r.ok === false) msg(`The Stick said no: ${r.error}`, "bad");
-      else msg(done, "ok");
-    } catch (e) {
-      msg(e.message, "bad");
-    }
-  }
-
-  async function teardown() {
-    const p = port;
-    port = null;
-    try { if (reader) await reader.cancel(); } catch {}
-    try { if (p) await p.close(); } catch {}
-    $("connect").hidden = false;
-    $("disconnect").hidden = true;
-    $("panel").hidden = true;
-  }
-
-  $("connect").addEventListener("click", async () => {
-    try {
-      port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] });  // Espressif USB
-      await port.open({ baudRate: 115200 });
-    } catch (e) {
-      port = null;
-      if (e.name !== "NotFoundError") msg(`Couldn't open the port: ${e.message}`, "bad");
-      return;
-    }
-    $("connect").hidden = true;
-    $("disconnect").hidden = false;
-    msg("Asking the Stick…");
-    readLoop();
-    run({}, "Connected.");
-  });
-
-  $("disconnect").addEventListener("click", () => { teardown(); msg("Disconnected."); });
-
-  $("save-relay").addEventListener("click", () => {
-    const relay = $("relay").value.trim();
-    run({ relay }, relay ? `Saved: the Stick now uses ${relay}.` : "Cleared: the Stick finds the relay on the network.");
-  });
-
-  $("unpair").addEventListener("click", () => {
-    if (!confirm("Forget this Stick's key? It will show a new code to approve on the relay.")) return;
-    run({ unpair: true }, "Key forgotten: approve the new code the Stick shows.");
-  });
-</script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
