@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+**The relay announces itself; a Stick finds it** (provisioning phase 2 of 4):
+- **Relay:** announces `_kai._tcp` on the LAN with python-zeroconf (pure Python: no avahi or sudo), only on
+  its LAN address. The record carries the encrypted port, `tls=1`, the path and its version.
+  `KAI_ANNOUNCE=0` turns it off.
+- **Stick:** with no relay address set, it asks the network (1.5 s), picks a record it can use, and saves
+  it. If that address stops answering, it looks again, keeping the old one until a search finds a new
+  one. A manual address always wins.
+- **Discovery isn't trust:** a fake announcement gets nowhere without the device's key.
+- **Tested:** the relay's record is visible from a Mac (`dns-sd`). On the Stick, with its manual address
+  cleared, it found the relay in 1.4 s and reconnected over the encrypted link.
+
 **One firmware for every Stick** (provisioning phase 1 of 4):
 - **Settings live on the Stick, not in the binary.** Wi-Fi, the relay address and the device key are stored
   in NVS, which survives reflashing. A build with no `secrets.h` contains no secrets (checked against the

@@ -7,8 +7,8 @@
 #define WIFI_SSID "your-ssid"
 #define WIFI_PASS "your-password"
 
-// The home server running kai-relay: its LAN IP (reserve it in your router), or a "*.local" name if the
-// server runs mDNS (avahi).
+// The relay's address. Leave the example value to let the Stick find the relay on the network (the relay
+// announces itself as `_kai._tcp`); set it only where multicast doesn't get through.
 #define RELAY_HOST "192.168.1.50"
 #define RELAY_PORT 8765       // plain ws://, only used without a device key below
 #define RELAY_TLS_PORT 8443   // the encrypted link (KAI_TLS_PORT on the relay)

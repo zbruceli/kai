@@ -67,6 +67,7 @@ arrives, so the answer isn't lost.
 | `audio.cpp` | Half-duplex ES8311 codec: 3-buffer mic rotation over ~380 ms of DMA, 2 MB speaker ring, loudness boost |
 | `settings.cpp` | Per-device settings in NVS (Wi-Fi, relay address, device key); the binary holds no secrets |
 | `provision.cpp` | Setup over USB: Improv Wi-Fi (for the web flasher page) and `kai-config` lines |
+| relay discovery (`main.cpp`) | With no relay address set, ask the network for `_kai._tcp` (ESP-IDF mDNS, 1.5 s) and save what's found; a manual address wins |
 | `voice_codec.cpp` | Opus (libopus 1.6.1, fixed point): mic encode at complexity 1 (~6.4 ms per 20 ms frame at 240 MHz), speech decode (~3.9 ms) |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
