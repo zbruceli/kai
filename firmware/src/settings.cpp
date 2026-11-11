@@ -29,6 +29,7 @@ void load() {
   cfg.keyId = prefs.getString("key_id", "");
   cfg.keyHex = prefs.getString("key", "");
   cfg.token = prefs.getString("token", "");
+  cfg.keyApproved = prefs.getBool("key_ok", true);  // keys from secrets.h or kai-config are already known
   prefs.end();
 }
 
@@ -121,21 +122,34 @@ void setFound(const String& host, uint16_t port) {
   cfg.foundPort = port;
 }
 
-bool setKey(const String& identity, const String& hex) {
+bool setKey(const String& identity, const String& hex, bool approved) {
   if (!provutil::validIdentity(identity.c_str()) || !provutil::validKeyHex(hex.c_str())) return false;
   prefs.begin(NS, false);
   prefs.putString("key_id", identity);
   prefs.putString("key", hex);
+  prefs.putBool("key_ok", approved);
   prefs.end();
+  cfg.keyApproved = approved;
   cfg.keyId = identity;
   cfg.keyHex = hex;
   return true;
+}
+
+bool keyApproved() { return cfg.keyApproved; }
+
+void setKeyApproved() {
+  if (cfg.keyApproved) return;
+  prefs.begin(NS, false);
+  prefs.putBool("key_ok", true);
+  prefs.end();
+  cfg.keyApproved = true;
 }
 
 void clearKey() {
   prefs.begin(NS, false);
   prefs.remove("key_id");
   prefs.remove("key");
+  prefs.remove("key_ok");
   prefs.end();
   cfg.keyId = cfg.keyHex = "";
 }

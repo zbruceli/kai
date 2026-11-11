@@ -16,6 +16,7 @@ struct Config {
   uint16_t foundPort = 8443;
   String keyId, keyHex;       // this Stick's TLS-PSK identity and 32-byte key (64 hex characters)
   String token;               // legacy shared token: only for a relay without device keys (plain ws://)
+  bool keyApproved = true;    // false for a freshly paired key until the relay first accepts it
 };
 
 void begin();               // load; seeds from secrets.h on the very first boot of a developer build
@@ -28,7 +29,10 @@ bool hasKey();
 void setWifi(const String& ssid, const String& pass);
 bool setRelay(const String& hostPort);                    // "host" or "host:port"; "" clears it
 void setFound(const String& host, uint16_t port);         // remember the relay found on the network
-bool setKey(const String& identity, const String& hex);   // validated; false if malformed
+// approved=false for a key from pairing: it isn't known to work until the relay accepts it once.
+bool setKey(const String& identity, const String& hex, bool approved = true);  // false if malformed
+bool keyApproved();         // the relay has accepted this key at least once
+void setKeyApproved();
 void clearKey();            // forget the device key (a pairing the relay never approved)
 void clearToken();          // forget the legacy shared token
 void factoryReset();        // erase everything (stays erased: secrets.h is not re-applied)

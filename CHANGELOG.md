@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+**Pairing a new Stick with a code** (provisioning phase 3 of 4):
+- **No more copying keys by hand.** A Stick without a device key agrees one with the relay (X25519,
+  HKDF-SHA512) on the pairing port (8444, `/pair`) and shows a 6-digit code. Run `kai-approve <code>` on
+  the relay; it only succeeds if the relay computed the same code. Then press the Stick's front button.
+- **Like Bluetooth's numeric comparison:** the relay commits to its nonce before seeing the Stick's, so a
+  man in the middle shows up as two different codes (one guess in a million). No secret crosses the
+  network.
+- **Relay:**
+  - devices live in SQLite (`data/devices.db`), read on every TLS handshake, so approving and revoking
+    apply at once; a revoked Stick's open connection is closed. `KAI_DEVICE_PSKS` keys are imported once.
+  - `kai-devices`, `kai-approve`, `kai-revoke`, and `kai-pair --open <minutes>` (a pairing window that
+    approves the next Stick without typing its code; off unless opened).
+  - limits: one request per address every 10 s, at most 3 waiting, each kept 5 minutes.
+  - plain `ws://` is only on when asked for (`KAI_ALLOW_PLAIN_WS=1`) or while no device has a key.
+  - times are stored in UTC, so the commands agree with the service whatever their time zone.
+- **Stick (firmware 0.13.2):**
+  - the code card wakes the screen; a press that only wakes the screen doesn't confirm, and the code must
+    have been visible for 1.5 s. The side button cancels.
+  - a key the relay hasn't accepted yet is marked as such and dropped after 5 minutes, so the Stick pairs
+    again rather than retrying a key the relay never approved.
+  - `kai-config {"unpair": true}` forgets the key; `get` reports the pairing state.
+  - the first attempt after boot now connects at once (it used to wait a minute for the library's
+    reconnect timer).
+- **Tested:** a shared test vector (Python and C agree byte for byte), a real man-in-the-middle proxy that
+  ends in mismatched codes, limits, expiry, revocation and time zones. On the Stick: unpaired, paired
+  with a code, approved, and reconnected over the encrypted link with its new key.
+
 **The relay announces itself; a Stick finds it** (provisioning phase 2 of 4):
 - **Relay:** announces `_kai._tcp` on the LAN with python-zeroconf (pure Python: no avahi or sudo), only on
   its LAN address. The record carries the encrypted port, `tls=1`, the path and its version.

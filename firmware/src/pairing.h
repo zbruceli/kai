@@ -18,6 +18,7 @@ bool failed();                                   // the last attempt failed (try
 const char* error();
 const char* status();  // for `kai-config get`: idle, exchanging, showing code, failed: <why>
 
+uint32_t codeAgeMs();  // how long the code has been on screen
 bool confirm();  // the owner pressed the front button: save the key (true) and finish
 void cancel();   // the side button, or the code expired
 

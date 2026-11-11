@@ -126,7 +126,9 @@ void start(const String& host, uint16_t port) {
   startedAt = millis();
   ws.begin(host, port, "/pair");
   ws.onEvent(onEvent);
-  ws.setReconnectInterval(60000);  // one attempt; failures are retried from the caller
+  // The library measures this from boot, so a long interval blocks the first attempt: keep it short. Our own
+  // 20 s timeout (poll) ends an attempt that doesn't get through.
+  ws.setReconnectInterval(2000);
 }
 
 void poll() {
@@ -159,11 +161,13 @@ const char* status() {
 }
 const char* error() { return lastError.c_str(); }
 
+uint32_t codeAgeMs() { return state == State::ShowCode ? millis() - codeShownAt : 0; }
+
 bool confirm() {
   if (state != State::ShowCode) return false;
   char keyHex[65];
   toHex(key, KEY_BYTES, keyHex);
-  const bool ok = settings::setKey(identity, keyHex);
+  const bool ok = settings::setKey(identity, keyHex, false);  // trusted once the relay accepts it
   crypto_wipe(keyHex, sizeof(keyHex));
   wipe();
   state = State::Idle;

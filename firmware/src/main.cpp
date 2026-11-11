@@ -51,6 +51,7 @@ static constexpr uint16_t RELAY_PLAIN_PORT = 8765;          // only for a relay 
 static constexpr uint16_t RELAY_PAIR_PORT = 8444;           // pairing a new Stick (relay/kai_relay/pairing.py)
 static constexpr uint32_t PAIR_RETRY_MS = 30000;            // after a failed or cancelled pairing
 static constexpr uint32_t APPROVAL_WAIT_MS = 5 * 60000;     // paired but never approved: start over
+static constexpr uint32_t CONFIRM_MIN_MS = 1500;            // a press sooner than this after the code isn't a "yes"
 // Factory reset: hold the side button this long, then confirm with the front button.
 static constexpr uint32_t RESET_HOLD_MS = 10000;
 static constexpr uint32_t RESET_CONFIRM_MS = 15000;
@@ -109,8 +110,10 @@ static bool rediscover = false;      // ...which stopped answering: look again b
 static uint16_t foundPairPort = 0;   // the pairing port the relay announced (0: use the default)
 static uint32_t pairRetryAt = 0;     // don't start pairing again before this
 static bool pairCardShown = false;
-static bool awaitingApproval = false;  // the owner confirmed a code; the relay hasn't accepted the key yet
-static uint32_t pairedAt = 0;
+static uint32_t pairedAt = 0;  // when the owner confirmed a code (or boot, for a key not yet accepted)
+
+// The owner confirmed a code, but the relay hasn't accepted the key yet (kept across reboots in NVS).
+static bool awaitingApproval() { return settings::hasKey() && !settings::keyApproved(); }
 static bool resetArmed = false;    // asked "erase settings?", waiting for the front button
 static uint32_t resetArmedAt = 0;
 static bool resetHoldDone = false;
@@ -255,7 +258,7 @@ static void powerSave(uint32_t now) {
   return;  // hold the current state for a measurement run (env:sticks3_powertest)
 #endif
   if (mode != Mode::Idle && mode != Mode::Offline) return;
-  if (earlyTalk || pairing::active() || awaitingApproval) return;
+  if (earlyTalk || pairing::active() || awaitingApproval()) return;
   const uint32_t idle = now - lastInteraction;
   if (!dimmed && idle > DIM_AFTER_MS) {
     backlight(BRIGHTNESS_DIM);
@@ -468,7 +471,7 @@ static void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
       wsConnected = true;
-      awaitingApproval = false;
+      settings::setKeyApproved();  // a freshly paired key works: the relay approved it
       const bool firstConnect = !everConnected;  // the wake reason belongs to this boot's first hello
       everConnected = true;
       connectedSinceBegin = true;
@@ -684,9 +687,8 @@ static void maintainConnection() {
     }
     return;
   }
-  if (awaitingApproval && !wsConnected) {
+  if (awaitingApproval() && !wsConnected) {
     if (now - pairedAt > APPROVAL_WAIT_MS) {  // nobody approved it: forget the key and pair again
-      awaitingApproval = false;
       settings::clearKey();
       onRelayChanged();
       pairRetryAt = 0;
@@ -707,7 +709,7 @@ static void maintainConnection() {
 
   // The relay may have a new address since we cached it: drop the cache and look it up again.
   // The same for the relay found on the network: look for it again before the next try.
-  if (wsStarted && !connectedSinceBegin && (usedRelayCache || usedDiscovered) && !awaitingApproval &&
+  if (wsStarted && !connectedSinceBegin && (usedRelayCache || usedDiscovered) && !awaitingApproval() &&
       now - wsBeganAt > 6000) {
     ws.disconnect();
     wsStarted = false;
@@ -784,10 +786,13 @@ static void showPairCard() {
 // front button, and only then does the Stick keep the key: that protects the Stick from a fake relay.
 static bool handlePairingButtons() {
   if (!pairing::showingCode()) return false;
-  if (M5.BtnA.wasPressed()) {
+  if ((screenOff || dimmed) && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
+    wake();  // just wake the screen: the owner hasn't seen the code yet
+    return true;
+  }
+  if (M5.BtnA.wasPressed() && pairing::codeAgeMs() >= CONFIRM_MIN_MS) {
     pairCardShown = false;
     if (pairing::confirm()) {
-      awaitingApproval = true;
       pairedAt = millis();
       onRelayChanged();
     }
@@ -873,6 +878,7 @@ void setup() {
   }
 
   settings::begin();
+  pairedAt = millis();  // a paired key not yet accepted gets the full approval wait from boot
   provision::begin(FW_VERSION, {onWifiChanged, onRelayChanged});
   startWifi();
   face::begin();
@@ -899,6 +905,7 @@ void loop() {
   pairing::poll();
   if (pairing::showingCode()) {
     if (!pairCardShown) {
+      wake();  // the screen may have gone dark while the exchange ran
       showPairCard();
       pairCardShown = true;
     }

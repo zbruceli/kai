@@ -20,6 +20,9 @@ One WebSocket at `/ws`. With device keys configured (the default setup), the tra
 `wss://…:8443` with TLS 1.2 ECDHE-PSK:
 - **Keys:** a per-device 32-byte pre-shared key (`kai-psk`), so both sides authenticate each other in the
   handshake.
+- **Pairing:** a new Stick agrees its key with the relay (`kai_relay/pairing.py`): X25519 and HKDF-SHA512,
+  with a commitment so a man in the middle shows up as mismatched 6-digit codes. The owner approves with
+  `kai-approve <code>`; keys live in `data/devices.db`, read on every handshake.
 - **Forward secrecy:** X25519, so a key leaked later doesn't decrypt recorded traffic.
 - **Cost:** about 0.2 s per reconnect on the Stick (measured).
 - **Firmware:** the WebSockets library gets a small build-time patch
@@ -68,6 +71,7 @@ arrives, so the answer isn't lost.
 | `settings.cpp` | Per-device settings in NVS (Wi-Fi, relay address, device key); the binary holds no secrets |
 | `provision.cpp` | Setup over USB: Improv Wi-Fi (for the web flasher page) and `kai-config` lines |
 | relay discovery (`main.cpp`) | With no relay address set, ask the network for `_kai._tcp` (ESP-IDF mDNS, 1.5 s) and save what's found; a manual address wins |
+| `pairing.cpp`, `pairing_crypto.cpp` | Pairing without a key: X25519 exchange with the relay's `/pair` (port 8444), a 6-digit code to compare, the key saved on the front button (Monocypher) |
 | `voice_codec.cpp` | Opus (libopus 1.6.1, fixed point): mic encode at complexity 1 (~6.4 ms per 20 ms frame at 240 MHz), speech decode (~3.9 ms) |
 | `face.cpp` | 20×18 pixel sprite (pastel), icon bar, reply view with word wrap and scrolling |
 
