@@ -4,7 +4,7 @@
 //     has actually joined that network.
 //   - `kai-config {json}` lines for everything else, answered with `kai-config {json}`:
 //       {"get": true}                    -> device name, firmware, Wi-Fi name, relay, whether a key is set
-//       {"relay": "host[:port]"}         -> the relay's address ("" clears it)
+//       {"relay": "host[:port]"}         -> the relay's address ("" clears it: find it on the network)
 //       {"key": "kai-xxxx:<64 hex>"}     -> this Stick's device key, as `kai-psk` prints it
 //       {"reset": true}                  -> factory reset
 //     Secrets are never sent back.

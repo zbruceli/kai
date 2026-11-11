@@ -90,11 +90,37 @@ void test_improv_bad_checksum_is_rejected() {
   TEST_ASSERT_TRUE(errored);
 }
 
+void test_manual_relay_wins_over_discovered() {
+  RelayTarget t;
+  TEST_ASSERT_TRUE(chooseRelay("192.168.1.50", 9443, "192.168.1.77", 8443, t));
+  TEST_ASSERT_EQUAL_STRING("192.168.1.50", t.host.c_str());
+  TEST_ASSERT_EQUAL_UINT16(9443, t.port);
+  TEST_ASSERT_FALSE(t.discovered);
+  TEST_ASSERT_TRUE(chooseRelay("", 8443, "192.168.1.77", 8443, t));  // nothing set by hand: use the found one
+  TEST_ASSERT_EQUAL_STRING("192.168.1.77", t.host.c_str());
+  TEST_ASSERT_TRUE(t.discovered);
+  TEST_ASSERT_FALSE(chooseRelay("", 8443, "", 8443, t));             // neither: go and look
+}
+
+void test_pick_announced_relay() {
+  const Announced found[] = {
+      {"", 8443, true},               // no IPv4 address: skipped
+      {"192.168.1.60", 8765, false},  // the plain listener
+      {"192.168.1.50", 8443, true},   // the encrypted link
+  };
+  TEST_ASSERT_EQUAL_INT(2, pickAnnounced(found, 3, true));   // with a device key: only tls=1
+  TEST_ASSERT_EQUAL_INT(1, pickAnnounced(found, 3, false));  // legacy token only: the plain one
+  TEST_ASSERT_EQUAL_INT(-1, pickAnnounced(found, 1, true));
+  TEST_ASSERT_EQUAL_INT(-1, pickAnnounced(found, 0, true));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_relay_address);
   RUN_TEST(test_device_key);
   RUN_TEST(test_improv_frame_round_trip);
   RUN_TEST(test_improv_bad_checksum_is_rejected);
+  RUN_TEST(test_manual_relay_wins_over_discovered);
+  RUN_TEST(test_pick_announced_relay);
   return UNITY_END();
 }

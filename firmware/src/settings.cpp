@@ -24,6 +24,8 @@ void load() {
   cfg.pass = prefs.getString("pass", "");
   cfg.relayHost = prefs.getString("relay", "");
   cfg.relayPort = prefs.getUShort("port", provutil::DEFAULT_RELAY_PORT);
+  cfg.foundHost = prefs.getString("found", "");
+  cfg.foundPort = prefs.getUShort("fport", provutil::DEFAULT_RELAY_PORT);
   cfg.keyId = prefs.getString("key_id", "");
   cfg.keyHex = prefs.getString("key", "");
   cfg.token = prefs.getString("token", "");
@@ -107,6 +109,16 @@ bool setRelay(const String& hostPort) {
   cfg.relayHost = host.c_str();
   cfg.relayPort = port;
   return true;
+}
+
+void setFound(const String& host, uint16_t port) {
+  if (host == cfg.foundHost && port == cfg.foundPort) return;  // spare the flash
+  prefs.begin(NS, false);
+  prefs.putString("found", host);
+  prefs.putUShort("fport", port);
+  prefs.end();
+  cfg.foundHost = host;
+  cfg.foundPort = port;
 }
 
 bool setKey(const String& identity, const String& hex) {

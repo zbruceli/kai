@@ -288,3 +288,17 @@ def test_token_only_needed_without_tls():
     asyncio.run(go())
     assert results == {"tls, no token": True, "plain, no token": False, "plain, wrong token": False,
                        "plain, right token": True}
+
+
+def test_relay_announcement_record():
+    """What a Stick looking for `_kai._tcp` gets: the LAN address, the encrypted port, tls=1 and the path."""
+    import socket
+
+    from kai_relay.discovery import SERVICE, service_info
+
+    info = service_info("192.168.1.50", 8443, True, "0.13.0", hostname="homeserver.lan")
+    assert info.type == SERVICE == "_kai._tcp.local."
+    assert info.name == "Kai relay on homeserver._kai._tcp.local." and info.server == "homeserver.local."
+    assert info.port == 8443 and info.addresses == [socket.inet_aton("192.168.1.50")]
+    assert info.properties == {b"v": b"0.13.0", b"tls": b"1", b"path": b"/ws"}
+    assert service_info("10.0.0.2", 8765, False, "x").properties[b"tls"] == b"0"

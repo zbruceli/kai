@@ -10,7 +10,7 @@ import httpx
 from google import genai
 from websockets.asyncio.server import ServerConnection, serve
 
-from . import mcp_server, tls, tools
+from . import discovery, mcp_server, tls, tools
 from .agent import AgentHub, AgentStore
 from .schedule import Scheduler
 from .config import load_settings
@@ -105,6 +105,16 @@ async def run() -> None:
                                 "uses the encrypted link")
                 else:
                     log.warning("no KAI_DEVICE_PSKS: the link to the Stick is unencrypted (see kai-psk)")
+            if settings.announce:
+                ip, encrypted = _lan_ip(), bool(settings.device_psks)
+                if ip.startswith("127."):
+                    log.warning("no LAN address: not announcing the relay; Sticks need its address set")
+                else:
+                    try:
+                        await stack.enter_async_context(discovery.announce(
+                            ip, settings.tls_port if encrypted else settings.port, encrypted, version("kai-relay")))
+                    except OSError as e:
+                        log.warning("couldn't announce the relay on the LAN (%s); Sticks need its address set", e)
             if settings.home_lat is None:
                 log.warning("KAI_HOME_LAT/LON not set: 'near me' questions will fail")
             if not settings.maps_api_key:

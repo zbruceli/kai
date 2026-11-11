@@ -66,6 +66,43 @@ inline bool parseKeyLine(const std::string& line, std::string& identity, std::st
   return validIdentity(identity) && validKeyHex(hex);
 }
 
+// Which relay to connect to: a manually set address always wins over one found on the network.
+struct RelayTarget {
+  std::string host;
+  uint16_t port = DEFAULT_RELAY_PORT;
+  bool discovered = false;
+};
+
+inline bool chooseRelay(const std::string& manualHost, uint16_t manualPort, const std::string& foundHost,
+                        uint16_t foundPort, RelayTarget& out) {
+  if (!manualHost.empty()) {
+    out = {manualHost, manualPort, false};
+    return true;
+  }
+  if (!foundHost.empty()) {
+    out = {foundHost, foundPort, true};
+    return true;
+  }
+  return false;
+}
+
+// One `_kai._tcp` answer from the network.
+struct Announced {
+  std::string ip;
+  uint16_t port;
+  bool tls;
+};
+
+// The first announced relay this Stick can use: the encrypted link when it has a device key, the plain
+// one when it only has the legacy token. -1 if none fits.
+inline int pickAnnounced(const Announced* found, size_t n, bool haveKey) {
+  for (size_t i = 0; i < n; i++) {
+    if (found[i].ip.empty() || found[i].port == 0) continue;
+    if (found[i].tls == haveKey) return int(i);
+  }
+  return -1;
+}
+
 // An Improv serial frame: "IMPROV", version, type, length, data, checksum (sum of all bytes before it).
 // Writes into out (at least len + 10 bytes) and returns the frame length.
 inline size_t improvFrame(uint8_t version, uint8_t type, const uint8_t* data, size_t len, uint8_t* out) {

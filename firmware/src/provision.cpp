@@ -182,7 +182,8 @@ void handleConfig(const String& json) {
   out["fw"] = fwVersion;
   out["wifi"] = c.ssid;
   out["wifi_connected"] = WiFi.status() == WL_CONNECTED;
-  out["relay"] = c.relayHost.length() ? c.relayHost + ":" + c.relayPort : String("");
+  out["relay"] = c.relayHost.length() ? c.relayHost + ":" + c.relayPort : String("");  // set by hand
+  out["found"] = c.foundHost.length() ? c.foundHost + ":" + c.foundPort : String("");  // on the network
   out["key"] = settings::hasKey() ? c.keyId : String("");  // the identity only, never the key
   reply(out);
   if (relayChanged && hooks.relayChanged) hooks.relayChanged();

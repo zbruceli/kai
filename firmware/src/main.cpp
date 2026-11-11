@@ -5,6 +5,7 @@
 
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <M5Unified.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
@@ -16,6 +17,7 @@
 #include "audio.h"
 #include "face.h"
 #include "provision.h"
+#include "provision_util.h"
 #include "settings.h"
 #include "voice_codec.h"
 #include "wake_alarm.h"
@@ -24,7 +26,7 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static_assert(audio::MIC_CHUNK == voice::UP_FRAME, "each mic frame must be exactly one Opus frame");
 
-static constexpr const char* FW_VERSION = "0.13.0";
+static constexpr const char* FW_VERSION = "0.13.1";
 static constexpr uint32_t THINKING_TIMEOUT_MS = 30000;
 static constexpr uint32_t EMPTY_TURN_GRACE_MS = 2000;  // turn ended with nothing to show: wait for stragglers
 static constexpr uint32_t REPLY_TIMEOUT_MS = 20000;
@@ -98,6 +100,8 @@ static bool wokeByTimer = false;   // this boot came from the RTC timer, not a b
 static bool touched = false;       // a button was pressed since boot
 static uint32_t wsBeganAt = 0;
 static uint32_t relayLastTry = 0;  // 0: try now
+static bool usedDiscovered = false;  // connecting to the relay found on the network
+static bool rediscover = false;      // ...which stopped answering: look again before the next try
 static bool resetArmed = false;    // asked "erase settings?", waiting for the front button
 static uint32_t resetArmedAt = 0;
 static bool resetHoldDone = false;
@@ -541,26 +545,70 @@ static void onRelayChanged() {
   relayLastTry = 0;
 }
 
+static void startMdns() {
+  static bool started = false;
+  if (!started) started = MDNS.begin(settings::deviceName().c_str());
+}
+
+// Look for the relay on the network: it announces itself as `_kai._tcp` (relay/kai_relay/discovery.py).
+// Blocks the loop for up to 1.5 s, so it only runs with no address at all, or after the one we had failed.
+static bool discoverRelay() {
+  startMdns();
+  mdns_result_t* results = nullptr;
+  if (mdns_query_ptr("_kai", "_tcp", 1500, 4, &results) != ESP_OK || !results) return false;
+  provutil::Announced found[4];
+  size_t n = 0;
+  for (mdns_result_t* r = results; r && n < 4; r = r->next) {
+    provutil::Announced a{"", r->port, false};
+    for (mdns_ip_addr_t* ip = r->addr; ip; ip = ip->next) {
+      if (ip->addr.type == ESP_IPADDR_TYPE_V4) {
+        a.ip = IPAddress(ip->addr.u_addr.ip4.addr).toString().c_str();
+        break;
+      }
+    }
+    for (size_t t = 0; t < r->txt_count; t++) {
+      if (r->txt[t].key && r->txt[t].value && !strcmp(r->txt[t].key, "tls")) a.tls = !strcmp(r->txt[t].value, "1");
+    }
+    found[n++] = a;
+  }
+  mdns_query_results_free(results);
+  const int i = provutil::pickAnnounced(found, n, settings::hasKey());
+  if (i < 0) return false;
+  settings::setFound(found[i].ip.c_str(), found[i].port);  // remembered across sleep and power-off
+  return true;
+}
+
 static void startRelayConnection() {
   const auto& c = settings::get();
-  String host = c.relayHost;
   usedRelayCache = false;
-  if (host.isEmpty()) {
-    if (!earlyTalk) face::setStatusText("no relay address set");
-    return;  // set it over USB (`kai-config {"relay": ...}`); retried from loop()
-  }
   if (!settings::hasKey() && c.token.isEmpty()) {
     if (!earlyTalk) face::setStatusText("no device key set");
     return;
   }
+  // No address set by hand: use the relay found on the network, looking for it if we have none yet or the
+  // one we had stopped answering. A failed search keeps the old one: the relay may just be restarting.
+  if (c.relayHost.isEmpty() && (c.foundHost.isEmpty() || rediscover)) {
+    if (!earlyTalk) face::setStatusText("looking for relay...");
+    const bool found = discoverRelay();
+    rediscover = false;
+    if (!found && c.foundHost.isEmpty()) {
+      if (!earlyTalk) face::setStatusText("no relay found");
+      return;  // retried from loop()
+    }
+  }
+  provutil::RelayTarget target;
+  provutil::chooseRelay(c.relayHost.c_str(), c.relayPort, c.foundHost.c_str(), c.foundPort, target);
+  String host = target.host.c_str();
+  usedDiscovered = target.discovered;
+  // A manual address on an old relay without device keys uses its plain port; announced records carry theirs.
+  const uint16_t port = settings::hasKey() || target.discovered ? target.port : RELAY_PLAIN_PORT;
   if (host.endsWith(".local")) {
     if (cachedRelayIp) {
       host = IPAddress(cachedRelayIp).toString();
       usedRelayCache = true;
     } else {
       // Arduino's DNS doesn't do mDNS; ask explicitly.
-      static bool mdnsStarted = false;
-      if (!mdnsStarted) mdnsStarted = MDNS.begin("kai-stick");
+      startMdns();
       // Blocks the loop (no redraw, no mic) while it waits, so keep it short and retry instead.
       IPAddress ip = MDNS.queryHost(host.substring(0, host.length() - 6), 1000);
       if (ip == IPAddress()) {
@@ -575,9 +623,9 @@ static void startRelayConnection() {
     // Encrypted and mutually authenticated (TLS 1.2 ECDHE-PSK): an impostor on the Wi-Fi can't complete
     // the handshake, so the owner's speech never reaches it. The key itself identifies this Stick to the
     // relay, so no token is needed. ~0.2 s at 240 MHz.
-    ws.beginSslWithPsk(host.c_str(), c.relayPort, "/ws", c.keyId.c_str(), c.keyHex.c_str());
+    ws.beginSslWithPsk(host.c_str(), port, "/ws", c.keyId.c_str(), c.keyHex.c_str());
   } else {
-    ws.begin(host, RELAY_PLAIN_PORT, "/ws");  // an old relay without device keys: unencrypted
+    ws.begin(host, port, "/ws");  // an old relay without device keys: unencrypted
   }
   if (c.token.length()) ws.setExtraHeaders((String("Authorization: Bearer ") + c.token).c_str());
   ws.onEvent(onWsEvent);
@@ -628,10 +676,12 @@ static void maintainConnection() {
   }
 
   // The relay may have a new address since we cached it: drop the cache and look it up again.
-  if (wsStarted && !connectedSinceBegin && usedRelayCache && now - wsBeganAt > 6000) {
+  // The same for the relay found on the network: look for it again before the next try.
+  if (wsStarted && !connectedSinceBegin && (usedRelayCache || usedDiscovered) && now - wsBeganAt > 6000) {
     ws.disconnect();
     wsStarted = false;
     cachedRelayIp = 0;
+    rediscover = usedDiscovered;
     relayLastTry = 0;
   }
   if (!wsStarted && (relayLastTry == 0 || now - relayLastTry > 5000)) {

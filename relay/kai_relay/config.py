@@ -34,6 +34,8 @@ class Settings:
     device_psks: dict = field(default_factory=dict)
     tls_port: int = 8443
     allow_plain: bool = True
+    # Announce the relay on the LAN (mDNS `_kai._tcp`) so a Stick without a relay address can find it.
+    announce: bool = True
 
     @property
     def imperial(self) -> bool:
@@ -94,4 +96,5 @@ def load_settings() -> Settings:
         device_psks=device_psks,
         tls_port=int(env.get("KAI_TLS_PORT", "8443")),
         allow_plain=allow_plain,
+        announce=env.get("KAI_ANNOUNCE", "1") != "0",
     )
