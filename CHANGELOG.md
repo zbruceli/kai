@@ -14,6 +14,8 @@
     cancelled while the Stick slept (nothing spoken, next valid wake sent), and a withdrawn update skipped
     after it was queued;
   - firmware: host-side unit tests of the alarm logic (`pio test -e native`), including the offline wake.
+  - on the real Stick, on battery: the relay was stopped across a 3-minute reminder's timer wake. The
+    Stick kept the alarm, woke again 5 minutes later, and Kai spoke the reminder.
 
 ## v0.12.0: encrypted link, security hardening, smarter routing
 
